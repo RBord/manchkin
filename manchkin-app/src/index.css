@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+:root {
+  --color-dungeon-bg: #0d0d0d;
+  --color-dungeon-surface: #1a1a2e;
+  --color-dungeon-border: #2d2d4a;
+  --color-gold: #f0b429;
+  --color-gold-dark: #c87f0a;
+  --color-monster-red: #e53e3e;
+  --color-treasure-gold: #d4a017;
+  --color-race-green: #38a169;
+  --color-class-blue: #3182ce;
+  --color-curse-purple: #805ad5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--color-dungeon-bg);
+  color: #e2e8f0;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  margin: 0;
+}
