@@ -15,6 +15,7 @@ function makePlayer(id: string, name: string): Player {
     equipped: [],
     raceCard: null,
     classCard: null,
+    gold: 0,
     isAlive: true,
   }
 }
@@ -52,6 +53,12 @@ interface GameStore extends GameState {
   playItemInCombat: (cardId: string) => void
   flee: () => void
   defeatMonster: () => void
+  joinCombat: (helperId: string) => void
+  leaveCombat: (helperId: string) => void
+  boostMonster: (cardId: string, byPlayerId: string) => void
+
+  // Sell items
+  sellItems: (cardIds: string[]) => void
 
   // Card management
   equipItem: (cardId: string) => void
@@ -69,6 +76,7 @@ interface GameStore extends GameState {
   // Computed
   currentPlayer: () => Player
   currentCombatStrength: () => number
+  activeMonsterLevel: () => number
   log: string[]
   addLog: (msg: string) => void
 }
@@ -85,6 +93,7 @@ const EMPTY_STATE: GameState & { log: string[] } = {
   treasureDiscard: [],
   activeMonster: null,
   combatBonus: 0,
+  monsterBonus: 0,
   helperIds: [],
   round: 0,
   log: [],
@@ -186,10 +195,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { activeMonster } = get()
     if (!activeMonster) return
     const strength = get().currentCombatStrength()
-    if (strength > activeMonster.level) {
+    const monsterLevel = get().activeMonsterLevel()
+    if (strength > monsterLevel) {
       get().defeatMonster()
     } else {
-      get().addLog(`Сила ${strength} < Монстр ${activeMonster.level}. Тікай або проси допомоги!`)
+      get().addLog(`Сила ${strength} ≤ Монстр ${monsterLevel}. Тікай або проси допомоги!`)
     }
   },
 
@@ -269,6 +279,70 @@ export const useGameStore = create<GameStore>((set, get) => ({
       treasureDiscard: tDiscard,
       doorDiscard: [...doorDiscard, activeMonster],
     })
+  },
+
+  // ── Combat help ────────────────────────────────────────────────────────────
+
+  joinCombat: (helperId) => {
+    const { helperIds, players } = get()
+    if (helperIds.includes(helperId)) return
+    const helper = players.find(p => p.id === helperId)
+    if (!helper) return
+    get().addLog(`${helper.name} приєднується до бою! (+${helper.level + helper.equipped.reduce((s, i) => s + i.bonus, 0)})`)
+    set({ helperIds: [...helperIds, helperId] })
+  },
+
+  leaveCombat: (helperId) => {
+    const { helperIds, players } = get()
+    const helper = players.find(p => p.id === helperId)
+    if (helper) get().addLog(`${helper.name} виходить з бою`)
+    set({ helperIds: helperIds.filter(id => id !== helperId) })
+  },
+
+  boostMonster: (cardId, byPlayerId) => {
+    const { players, monsterBonus, activeMonster, treasureDiscard } = get()
+    const player = players.find(p => p.id === byPlayerId)
+    if (!player || !activeMonster) return
+    const card = player.hand.find(c => c.id === cardId)
+    if (!card || (card.type !== 'potion' && card.type !== 'one-shot')) return
+
+    const boost = Math.abs((card as any).effect?.value ?? 2)
+    const updatedPlayers = players.map(p =>
+      p.id === byPlayerId ? { ...p, hand: p.hand.filter(c => c.id !== cardId) } : p
+    )
+    get().addLog(`${player.name} посилює монстра ${activeMonster.name}! +${boost} рівні`)
+    set({
+      players: updatedPlayers,
+      monsterBonus: monsterBonus + boost,
+      treasureDiscard: [...treasureDiscard, card],
+    })
+  },
+
+  // ── Sell items ─────────────────────────────────────────────────────────────
+
+  sellItems: (cardIds) => {
+    const { players, currentPlayerIndex, treasureDiscard } = get()
+    const player = players[currentPlayerIndex]
+    const toSell = player.hand.filter(c => cardIds.includes(c.id) && c.type === 'item') as ItemCard[]
+    if (toSell.length === 0) return
+
+    const total = toSell.reduce((s, c) => s + c.value, 0)
+    const newGold = player.gold + total
+    const levelsGained = Math.floor(newGold / 1000)
+    const goldLeft = newGold % 1000
+
+    const updatedPlayers = [...players]
+    const p = { ...player }
+    p.hand = p.hand.filter(c => !cardIds.includes(c.id))
+    p.gold = goldLeft
+    if (levelsGained > 0) {
+      p.level = Math.min(9, p.level + levelsGained) // max 9 — can't win by selling
+      get().addLog(`${player.name} продав речі за ${total} зол. і отримав +${levelsGained} рівень!`)
+    } else {
+      get().addLog(`${player.name} продав речі за ${total} зол. (${newGold}/1000 до рівня)`)
+    }
+    updatedPlayers[currentPlayerIndex] = p
+    set({ players: updatedPlayers, treasureDiscard: [...treasureDiscard, ...toSell] })
   },
 
   // ── Card management ────────────────────────────────────────────────────────
@@ -447,10 +521,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   currentCombatStrength: () => {
-    const { players, currentPlayerIndex, combatBonus } = get()
+    const { players, currentPlayerIndex, combatBonus, helperIds } = get()
     const player = players[currentPlayerIndex]
     if (!player) return 0
-    return playerCombatStrength(player) + combatBonus
+    const helperStrength = helperIds.reduce((sum, id) => {
+      const h = players.find(p => p.id === id)
+      return h ? sum + playerCombatStrength(h) : sum
+    }, 0)
+    return playerCombatStrength(player) + combatBonus + helperStrength
+  },
+
+  activeMonsterLevel: () => {
+    const { activeMonster, monsterBonus } = get()
+    return (activeMonster?.level ?? 0) + monsterBonus
   },
 
   log: [],

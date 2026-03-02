@@ -10,12 +10,7 @@ function DeckPile({ count, label, category }: { count: number; label: string; ca
 
   return (
     <div className="flex flex-col items-center gap-1">
-      <div
-        className={cn(
-          'w-[80px] h-[116px] rounded-lg border-2 flex flex-col items-center justify-center gap-1',
-          colors.border, colors.bg
-        )}
-      >
+      <div className={cn('w-[80px] h-[116px] rounded-lg border-2 flex flex-col items-center justify-center gap-1', colors.border, colors.bg)}>
         <span className="text-2xl">{colors.icon}</span>
         <span className={cn('text-xs font-bold', colors.text)}>{count}</span>
       </div>
@@ -28,19 +23,21 @@ export function TableCenter() {
   const {
     phase, activeMonster, doorDeck, treasureDeck,
     kickOpenDoor, lootRoom, endTurn,
-    currentCombatStrength, fightMonster, flee,
+    currentCombatStrength, activeMonsterLevel, fightMonster, flee,
+    helperIds, players, monsterBonus,
   } = useGameStore()
 
   const strength = currentCombatStrength()
+  const monsterLevel = activeMonsterLevel()
+  const helpers = helperIds.map(id => players.find(p => p.id === id)).filter(Boolean)
 
   return (
-    <div className="flex flex-col items-center gap-4">
-      {/* Decks row */}
-      <div className="flex items-center gap-6">
+    <div className="flex flex-col items-center gap-4 w-full px-4">
+      <div className="flex items-center gap-6 w-full justify-center">
         <DeckPile count={doorDeck.length} label="Колода дверей" category="door" />
 
-        {/* Center action zone */}
-        <div className="flex flex-col items-center gap-3 min-w-[180px]">
+        {/* Center zone */}
+        <div className="flex flex-col items-center gap-3 min-w-[220px]">
           <AnimatePresence mode="wait">
             {activeMonster ? (
               <motion.div
@@ -49,31 +46,61 @@ export function TableCenter() {
                 animate={{ scale: 1, opacity: 1, rotateY: 0 }}
                 exit={{ scale: 0.7, opacity: 0 }}
                 transition={{ duration: 0.4 }}
-                className="flex flex-col items-center gap-2"
+                className="flex flex-col items-center gap-2 w-full"
               >
                 <MunchkinCard card={activeMonster} faceUp noFlip interactive={false} />
 
-                {/* Combat info */}
-                <div className="bg-black/60 rounded-xl border border-white/10 px-4 py-2 text-center">
-                  <div className="flex items-center justify-center gap-4 text-sm">
-                    <span className="text-blue-400">⚔️ Ти: <strong>{strength}</strong></span>
-                    <span className="text-gray-500">vs</span>
-                    <span className="text-red-400">👹 Монстр: <strong>{activeMonster.level}</strong></span>
+                {/* Monster boost badge */}
+                {monsterBonus > 0 && (
+                  <motion.div
+                    initial={{ scale: 0 }} animate={{ scale: 1 }}
+                    className="bg-red-900 border border-red-700 rounded-full px-3 py-0.5 text-xs text-red-300 font-bold"
+                  >
+                    👹 +{monsterBonus} посилення!
+                  </motion.div>
+                )}
+
+                {/* Helpers badges */}
+                {helpers.length > 0 && (
+                  <div className="flex flex-wrap gap-1 justify-center">
+                    {helpers.map(h => h && (
+                      <span key={h.id} className="text-[10px] bg-green-900 border border-green-700 text-green-300 px-2 py-0.5 rounded-full">
+                        🤝 {h.name}
+                      </span>
+                    ))}
                   </div>
-                  {strength > activeMonster.level
-                    ? <p className="text-green-400 text-xs mt-1">Ти сильніший! Можеш перемогти!</p>
-                    : <p className="text-red-400 text-xs mt-1">Монстр сильніший! Проси допомоги або тікай!</p>
-                  }
+                )}
+
+                {/* Combat scoreboard */}
+                <div className="bg-black/60 rounded-xl border border-white/10 px-4 py-2 text-center w-full">
+                  <div className="flex items-center justify-center gap-4 text-sm">
+                    <div className="text-center">
+                      <p className="text-[10px] text-gray-500 mb-0.5">Герої</p>
+                      <span className="text-blue-400 font-bold text-lg">{strength}</span>
+                    </div>
+                    <span className="text-gray-600 text-lg">vs</span>
+                    <div className="text-center">
+                      <p className="text-[10px] text-gray-500 mb-0.5">
+                        Монстр{monsterBonus > 0 ? ` (+${monsterBonus})` : ''}
+                      </p>
+                      <span className="text-red-400 font-bold text-lg">{monsterLevel}</span>
+                    </div>
+                  </div>
+                  <p className={cn('text-xs mt-1', strength > monsterLevel ? 'text-green-400' : 'text-red-400')}>
+                    {strength > monsterLevel
+                      ? '✓ Можна перемогти!'
+                      : '✗ Проси допомоги або тікай!'}
+                  </p>
                 </div>
 
-                {/* Combat actions */}
+                {/* Actions */}
                 <div className="flex gap-2">
                   <button
                     onClick={fightMonster}
-                    disabled={strength <= activeMonster.level}
+                    disabled={strength <= monsterLevel}
                     className={cn(
                       'px-4 py-1.5 rounded-lg text-sm font-bold transition',
-                      strength > activeMonster.level
+                      strength > monsterLevel
                         ? 'bg-green-600 hover:bg-green-500 text-white cursor-pointer'
                         : 'bg-gray-800 text-gray-600 cursor-not-allowed'
                     )}

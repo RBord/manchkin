@@ -59,6 +59,7 @@ export const sampleItem: ItemCard = {
   bonus: 5,
   slot: 'hands-1',
   bigItem: false,
+  value: 600,
 }
 
 export const samplePotion: PotionCard = {

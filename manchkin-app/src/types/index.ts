@@ -54,6 +54,7 @@ export interface ItemCard extends BaseCard {
   bonus: number
   slot: ItemSlot
   bigItem?: boolean
+  value: number
 }
 
 export interface PotionCard extends BaseCard {
@@ -95,6 +96,7 @@ export interface Player {
   equipped: ItemCard[]
   raceCard: RaceCard | null
   classCard: ClassCard | null
+  gold: number
   isAlive: boolean
 }
 
@@ -119,6 +121,7 @@ export interface GameState {
   treasureDiscard: AnyCard[]
   activeMonster: MonsterCard | null
   combatBonus: number
+  monsterBonus: number
   helperIds: string[]
   round: number
 }
