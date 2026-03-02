@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useGameStore } from '../../store/gameStore'
 import { MunchkinCard } from '../cards/MunchkinCard'
+import { RaceClassPanel } from './RaceClassPanel'
 import type { AnyCard, ItemCard } from '../../types'
 import { cn } from '../../utils/cn'
 
@@ -13,7 +14,7 @@ const CLASS_ICONS: Record<string, string> = {
 }
 
 export function PlayerArea() {
-  const { players, currentPlayerIndex, phase, equipItem, discardCard, playItemInCombat } = useGameStore()
+  const { players, currentPlayerIndex, phase, equipItem, equipRace, equipClass, discardCard, playItemInCombat } = useGameStore()
   const player = players[currentPlayerIndex]
   const [activeTab, setActiveTab] = useState<'hand' | 'equipped'>('hand')
 
@@ -29,6 +30,8 @@ export function PlayerArea() {
 
   return (
     <div className="flex flex-col gap-3 w-full">
+      {/* Race & Class panel */}
+      <RaceClassPanel />
       {/* Player stats bar */}
       <div className="flex items-center gap-4 px-4 py-2 bg-white/5 rounded-xl border border-white/10">
         <div className="flex items-center gap-2">
@@ -102,13 +105,29 @@ export function PlayerArea() {
                   faceUp
                   onClick={handleCardClick}
                 />
-                <div className="flex gap-1">
+                <div className="flex gap-1 flex-wrap justify-center">
                   {card.type === 'item' && phase !== 'monster-fight' && (
                     <button
                       onClick={() => equipItem(card.id)}
                       className="text-[10px] px-2 py-0.5 bg-yellow-800 hover:bg-yellow-700 text-yellow-200 rounded transition cursor-pointer"
                     >
-                      + Надягнути
+                      + Екіп
+                    </button>
+                  )}
+                  {card.type === 'race' && (
+                    <button
+                      onClick={() => equipRace(card.id)}
+                      className="text-[10px] px-2 py-0.5 bg-green-800 hover:bg-green-700 text-green-200 rounded transition cursor-pointer"
+                    >
+                      🧝 Раса
+                    </button>
+                  )}
+                  {card.type === 'class' && (
+                    <button
+                      onClick={() => equipClass(card.id)}
+                      className="text-[10px] px-2 py-0.5 bg-blue-800 hover:bg-blue-700 text-blue-200 rounded transition cursor-pointer"
+                    >
+                      ⚔️ Клас
                     </button>
                   )}
                   {(card.type === 'potion' || card.type === 'one-shot') && phase === 'monster-fight' && (

@@ -93,6 +93,8 @@ export interface Player {
   gender: Gender
   hand: AnyCard[]
   equipped: ItemCard[]
+  raceCard: RaceCard | null
+  classCard: ClassCard | null
   isAlive: boolean
 }
 

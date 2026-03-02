@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { GameState, GamePhase, Player, AnyCard, MonsterCard, ItemCard } from '../types'
+import type { GameState, GamePhase, Player, AnyCard, MonsterCard, ItemCard, RaceCard, ClassCard } from '../types'
 import { DOOR_DECK, TREASURE_DECK, shuffleDeck } from '../data/deck'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -13,6 +13,8 @@ function makePlayer(id: string, name: string): Player {
     gender: 'male',
     hand: [],
     equipped: [],
+    raceCard: null,
+    classCard: null,
     isAlive: true,
   }
 }
@@ -54,6 +56,10 @@ interface GameStore extends GameState {
   // Card management
   equipItem: (cardId: string) => void
   unequipItem: (cardId: string) => void
+  equipRace: (cardId: string) => void
+  removeRace: () => void
+  equipClass: (cardId: string) => void
+  removeClass: () => void
   discardCard: (cardId: string) => void
   drawTreasure: (count: number) => void
 
@@ -294,6 +300,77 @@ export const useGameStore = create<GameStore>((set, get) => ({
     p.hand = [...p.hand, card]
     updatedPlayers[currentPlayerIndex] = p
     set({ players: updatedPlayers })
+  },
+
+  equipRace: (cardId) => {
+    const { players, currentPlayerIndex, doorDiscard } = get()
+    const player = players[currentPlayerIndex]
+    const card = player.hand.find(c => c.id === cardId) as RaceCard | undefined
+    if (!card || card.type !== 'race') return
+
+    const updatedPlayers = [...players]
+    const p = { ...player }
+    // Old race card goes to discard
+    const oldRace = p.raceCard
+    p.hand = p.hand.filter(c => c.id !== cardId)
+    p.raceCard = card
+    p.race = card.name.toLowerCase() as any
+    updatedPlayers[currentPlayerIndex] = p
+    get().addLog(`${player.name} тепер ${card.name}!`)
+    set({
+      players: updatedPlayers,
+      doorDiscard: oldRace ? [...doorDiscard, oldRace] : doorDiscard,
+    })
+  },
+
+  removeRace: () => {
+    const { players, currentPlayerIndex, doorDiscard } = get()
+    const player = players[currentPlayerIndex]
+    if (!player.raceCard) return
+
+    const updatedPlayers = [...players]
+    const p = { ...player }
+    const old = p.raceCard!
+    p.raceCard = null
+    p.race = 'human'
+    updatedPlayers[currentPlayerIndex] = p
+    get().addLog(`${player.name} скинув расу ${old.name}`)
+    set({ players: updatedPlayers, doorDiscard: [...doorDiscard, old] })
+  },
+
+  equipClass: (cardId) => {
+    const { players, currentPlayerIndex, doorDiscard } = get()
+    const player = players[currentPlayerIndex]
+    const card = player.hand.find(c => c.id === cardId) as ClassCard | undefined
+    if (!card || card.type !== 'class') return
+
+    const updatedPlayers = [...players]
+    const p = { ...player }
+    const oldClass = p.classCard
+    p.hand = p.hand.filter(c => c.id !== cardId)
+    p.classCard = card
+    p.class = card.name.toLowerCase() as any
+    updatedPlayers[currentPlayerIndex] = p
+    get().addLog(`${player.name} тепер ${card.name}!`)
+    set({
+      players: updatedPlayers,
+      doorDiscard: oldClass ? [...doorDiscard, oldClass] : doorDiscard,
+    })
+  },
+
+  removeClass: () => {
+    const { players, currentPlayerIndex, doorDiscard } = get()
+    const player = players[currentPlayerIndex]
+    if (!player.classCard) return
+
+    const updatedPlayers = [...players]
+    const p = { ...player }
+    const old = p.classCard!
+    p.classCard = null
+    p.class = 'none'
+    updatedPlayers[currentPlayerIndex] = p
+    get().addLog(`${player.name} скинув клас ${old.name}`)
+    set({ players: updatedPlayers, doorDiscard: [...doorDiscard, old] })
   },
 
   discardCard: (cardId) => {
