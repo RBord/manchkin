@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { GameState, GamePhase, Player, AnyCard, MonsterCard, ItemCard, RaceCard, ClassCard } from '../types'
+import type { GameState, GamePhase, Player, AnyCard, MonsterCard, ItemCard, RaceCard, ClassCard, CombatCardEntry, HelpReward } from '../types'
 import { DOOR_DECK, TREASURE_DECK, shuffleDeck } from '../data/deck'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -53,10 +53,13 @@ interface GameStore extends GameState {
   fightMonster: () => void
   playItemInCombat: (cardId: string) => void
   flee: () => void
+  dismissDice: () => void
   defeatMonster: () => void
   joinCombat: (helperId: string) => void
   leaveCombat: (helperId: string) => void
   boostMonster: (cardId: string, byPlayerId: string) => void
+  offerReward: (helperId: string, cardId: string | null) => void
+  removeReward: (helperId: string) => void
 
   // Sell items
   sellItems: (cardIds: string[]) => void
@@ -96,7 +99,10 @@ const EMPTY_STATE: GameState & { log: string[] } = {
   revealedCard: null,
   combatBonus: 0,
   monsterBonus: 0,
+  combatCards: [],
   helperIds: [],
+  helpRewards: [],
+  diceRoll: null,
   round: 0,
   log: [],
 }
@@ -229,7 +235,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   playItemInCombat: (cardId) => {
-    const { players, currentPlayerIndex, combatBonus } = get()
+    const { players, currentPlayerIndex, combatBonus, combatCards } = get()
     const player = players[currentPlayerIndex]
     const card = player.hand.find(c => c.id === cardId)
     if (!card) return
@@ -238,8 +244,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       const bonus = (card as any).effect?.value ?? 0
       const updatedPlayers = [...players]
       updatedPlayers[currentPlayerIndex] = { ...player, hand: player.hand.filter(c => c.id !== cardId) }
+      const entry: CombatCardEntry = { card, playedById: player.id, side: 'hero', bonus }
       get().addLog(`${player.name} грає ${card.name} (+${bonus} до бою)`)
-      set({ players: updatedPlayers, combatBonus: combatBonus + bonus })
+      set({ players: updatedPlayers, combatBonus: combatBonus + bonus, combatCards: [...combatCards, entry] })
     }
   },
 
@@ -247,26 +254,49 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { activeMonster, players, currentPlayerIndex } = get()
     const roll = Math.floor(Math.random() * 6) + 1
     const player = players[currentPlayerIndex]
-    get().addLog(`${player.name} тікає! Кубик: ${roll}`)
+    const success = roll >= 5
+    const badStuff = activeMonster?.badStuff ?? ''
 
-    if (roll >= 5) {
-      get().addLog(`Успішна втеча!`)
-      set({ phase: 'end-turn', activeMonster: null, combatBonus: 0, helperIds: [] })
+    get().addLog(`${player.name} тікає! Кубик: ${roll} — ${success ? 'ВДАЛОСЬ!' : 'НЕ ВДАЛОСЬ!'}`)
+
+    if (success) {
+      set({
+        diceRoll: { value: roll, success: true, badStuff: '' },
+        activeMonster: null,
+        combatBonus: 0,
+        monsterBonus: 0,
+        combatCards: [],
+        helperIds: [],
+        helpRewards: [],
+        phase: 'end-turn',
+      })
     } else {
-      // Bad stuff
-      get().addLog(`Не вдалось втекти! ${activeMonster?.badStuff}`)
       const updatedPlayers = [...players]
       const p = { ...updatedPlayers[currentPlayerIndex] }
-      if (activeMonster?.badStuff.includes('рівень')) {
-        p.level = Math.max(1, p.level - 1)
+      if (badStuff.includes('рівень')) p.level = Math.max(1, p.level - 1)
+      if (badStuff.includes('предмет') && p.equipped.length > 0) {
+        const best = [...p.equipped].sort((a, b) => b.bonus - a.bonus)[0]
+        p.equipped = p.equipped.filter(i => i.id !== best.id)
       }
       updatedPlayers[currentPlayerIndex] = p
-      set({ phase: 'end-turn', activeMonster: null, combatBonus: 0, helperIds: [], players: updatedPlayers })
+      set({
+        diceRoll: { value: roll, success: false, badStuff },
+        players: updatedPlayers,
+        activeMonster: null,
+        combatBonus: 0,
+        monsterBonus: 0,
+        combatCards: [],
+        helperIds: [],
+        helpRewards: [],
+        phase: 'end-turn',
+      })
     }
   },
 
+  dismissDice: () => set({ diceRoll: null }),
+
   defeatMonster: () => {
-    const { activeMonster, players, currentPlayerIndex, treasureDeck, treasureDiscard, doorDiscard } = get()
+    const { activeMonster, players, currentPlayerIndex, treasureDeck, treasureDiscard, doorDiscard, helpRewards } = get()
     if (!activeMonster) return
 
     const updatedPlayers = [...players]
@@ -278,19 +308,53 @@ export const useGameStore = create<GameStore>((set, get) => ({
     // Draw treasures
     let tDeck = [...treasureDeck]
     let tDiscard = [...treasureDiscard]
+    const drawnTreasures: AnyCard[] = []
     for (let i = 0; i < activeMonster.treasures; i++) {
       const { card, newDeck, newDiscard } = drawFromDeck(tDeck, tDiscard)
-      player.hand = [...player.hand, card]
+      drawnTreasures.push(card)
       tDeck = newDeck
       tDiscard = newDiscard
     }
 
+    // Distribute rewards to helpers
+    let mainTreasures = [...drawnTreasures]
+    for (const reward of helpRewards) {
+      const helperIdx = players.findIndex(p => p.id === reward.helperId)
+      if (helperIdx === -1) continue
+      const helper = { ...updatedPlayers[helperIdx] }
+
+      if (reward.fromVictory && mainTreasures.length > 0) {
+        // Give last drawn treasure to helper
+        const [last, ...rest] = mainTreasures.slice().reverse()
+        mainTreasures = rest.reverse()
+        helper.hand = [...helper.hand, last]
+        get().addLog(`${helper.name} отримує скарб як нагороду за допомогу`)
+      } else if (reward.cardId) {
+        // Card from main player's hand already "promised" — move it now
+        const promisedCard = player.hand.find(c => c.id === reward.cardId)
+        if (promisedCard) {
+          player.hand = player.hand.filter(c => c.id !== reward.cardId)
+          helper.hand = [...helper.hand, promisedCard]
+          get().addLog(`${player.name} дає ${promisedCard.name} → ${helper.name}`)
+        }
+      }
+
+      // Elf race bonus
+      if (helper.raceCard?.name === 'Ельф') {
+        helper.level = Math.min(10, helper.level + 1)
+        get().addLog(`${helper.name} (Ельф) отримує +1 рівень за допомогу!`)
+      }
+
+      updatedPlayers[helperIdx] = helper
+    }
+
+    player.hand = [...player.hand, ...mainTreasures]
     updatedPlayers[currentPlayerIndex] = player
     get().addLog(`${player.name} переміг ${activeMonster.name}! +1 рівень, +${activeMonster.treasures} скарби`)
 
     if (player.level >= 10) {
       get().addLog(`🏆 ${player.name} ПЕРЕМІГ! Рівень 10!`)
-      set({ phase: 'waiting', players: updatedPlayers })
+      set({ phase: 'waiting', players: updatedPlayers, diceRoll: null })
       return
     }
 
@@ -299,7 +363,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
       players: updatedPlayers,
       activeMonster: null,
       combatBonus: 0,
+      monsterBonus: 0,
+      combatCards: [],
       helperIds: [],
+      helpRewards: [],
+      diceRoll: null,
       treasureDeck: tDeck,
       treasureDiscard: tDiscard,
       doorDiscard: [...doorDiscard, activeMonster],
@@ -325,7 +393,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   boostMonster: (cardId, byPlayerId) => {
-    const { players, monsterBonus, activeMonster, treasureDiscard } = get()
+    const { players, monsterBonus, activeMonster, treasureDiscard, combatCards } = get()
     const player = players.find(p => p.id === byPlayerId)
     if (!player || !activeMonster) return
     const card = player.hand.find(c => c.id === cardId)
@@ -335,12 +403,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const updatedPlayers = players.map(p =>
       p.id === byPlayerId ? { ...p, hand: p.hand.filter(c => c.id !== cardId) } : p
     )
+    const entry: CombatCardEntry = { card, playedById: byPlayerId, side: 'monster', bonus: boost }
     get().addLog(`${player.name} посилює монстра ${activeMonster.name}! +${boost} рівні`)
     set({
       players: updatedPlayers,
       monsterBonus: monsterBonus + boost,
+      combatCards: [...combatCards, entry],
       treasureDiscard: [...treasureDiscard, card],
     })
+  },
+
+  offerReward: (helperId, cardId) => {
+    const { helpRewards } = get()
+    const reward: HelpReward = {
+      helperId,
+      cardId,
+      fromVictory: cardId === null,
+    }
+    const filtered = helpRewards.filter(r => r.helperId !== helperId)
+    set({ helpRewards: [...filtered, reward] })
+  },
+
+  removeReward: (helperId) => {
+    set(s => ({ helpRewards: s.helpRewards.filter(r => r.helperId !== helperId) }))
   },
 
   // ── Sell items ─────────────────────────────────────────────────────────────

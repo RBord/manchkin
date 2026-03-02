@@ -112,6 +112,25 @@ export type GamePhase =
   | 'charity'
   | 'end-turn'
 
+export interface CombatCardEntry {
+  card: AnyCard
+  playedById: string
+  side: 'hero' | 'monster'
+  bonus: number
+}
+
+export interface HelpReward {
+  helperId: string
+  cardId: string | null    // null = "1 скарб з перемоги"
+  fromVictory: boolean
+}
+
+export interface DiceRollResult {
+  value: number
+  success: boolean
+  badStuff: string
+}
+
 export interface GameState {
   phase: GamePhase
   players: Player[]
@@ -124,6 +143,9 @@ export interface GameState {
   revealedCard: AnyCard | null
   combatBonus: number
   monsterBonus: number
+  combatCards: CombatCardEntry[]
   helperIds: string[]
+  helpRewards: HelpReward[]
+  diceRoll: DiceRollResult | null
   round: number
 }

@@ -1,5 +1,7 @@
-import { motion } from 'framer-motion'
+import { useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useGameStore } from '../../store/gameStore'
+import type { ItemCard } from '../../types'
 import { cn } from '../../utils/cn'
 
 const RACE_ICONS: Record<string, string> = {
@@ -10,10 +12,20 @@ const CLASS_ICONS: Record<string, string> = {
 }
 
 export function OpponentsPanel() {
-  const { players, currentPlayerIndex, phase, helperIds, joinCombat, leaveCombat } = useGameStore()
+  const {
+    players, currentPlayerIndex, phase,
+    helperIds, joinCombat, leaveCombat,
+    helpRewards, offerReward, removeReward,
+  } = useGameStore()
+
+  const [openRewardFor, setOpenRewardFor] = useState<string | null>(null)
+
   const opponents = players.filter((_, i) => i !== currentPlayerIndex)
+  const currentPlayer = players[currentPlayerIndex]
 
   if (opponents.length === 0) return null
+
+  const handItems = currentPlayer?.hand.filter(c => c.type === 'item') as ItemCard[] ?? []
 
   return (
     <div className="flex flex-col gap-2">
@@ -23,6 +35,7 @@ export function OpponentsPanel() {
         {opponents.map((player) => {
           const isHelper = helperIds.includes(player.id)
           const canHelp = phase === 'monster-fight'
+          const reward = helpRewards.find(r => r.helperId === player.id)
           const combatStr = player.level + player.equipped.reduce((s, i) => s + i.bonus, 0)
 
           return (
@@ -31,9 +44,7 @@ export function OpponentsPanel() {
               layout
               className={cn(
                 'flex-1 min-w-[200px] rounded-xl border p-3 flex flex-col gap-2 transition-colors',
-                isHelper
-                  ? 'border-green-600 bg-green-950/40'
-                  : 'border-white/10 bg-white/[0.03]'
+                isHelper ? 'border-green-600 bg-green-950/40' : 'border-white/10 bg-white/[0.03]'
               )}
             >
               {/* Header */}
@@ -71,8 +82,8 @@ export function OpponentsPanel() {
                 ))}
               </div>
 
-              {/* Stats row */}
-              <div className="flex items-center gap-3 text-xs">
+              {/* Stats */}
+              <div className="flex items-center gap-3 text-xs flex-wrap">
                 <span className="text-yellow-400">⭐ {player.level} рівень</span>
                 <span className="text-blue-400">⚔️ {combatStr} сила</span>
                 {player.equipped.length > 0 && (
@@ -83,23 +94,20 @@ export function OpponentsPanel() {
                 )}
               </div>
 
-              {/* Equipped items — compact */}
+              {/* Equipped items */}
               {player.equipped.length > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {player.equipped.map(item => (
-                    <span
-                      key={item.id}
-                      className="text-[10px] px-2 py-0.5 bg-yellow-950 border border-yellow-800 text-yellow-400 rounded-full"
-                    >
+                    <span key={item.id} className="text-[10px] px-2 py-0.5 bg-yellow-950 border border-yellow-800 text-yellow-400 rounded-full">
                       {item.name} +{item.bonus}
                     </span>
                   ))}
                 </div>
               )}
 
-              {/* Race / Class cards */}
+              {/* Race/Class */}
               {(player.raceCard || player.classCard) && (
-                <div className="flex gap-1">
+                <div className="flex gap-1 flex-wrap">
                   {player.raceCard && (
                     <span className="text-[10px] px-2 py-0.5 bg-green-950 border border-green-800 text-green-400 rounded-full">
                       🧝 {player.raceCard.name}
@@ -113,19 +121,100 @@ export function OpponentsPanel() {
                 </div>
               )}
 
-              {/* Help button */}
+              {/* Combat actions */}
               {canHelp && (
-                <button
-                  onClick={() => isHelper ? leaveCombat(player.id) : joinCombat(player.id)}
-                  className={cn(
-                    'w-full py-1.5 rounded-lg text-xs font-bold transition cursor-pointer mt-1',
-                    isHelper
-                      ? 'bg-red-900 hover:bg-red-800 text-red-200'
-                      : 'bg-green-800 hover:bg-green-700 text-green-100'
-                  )}
-                >
-                  {isHelper ? '✕ Вийти з бою' : '🤝 Допомогти'}
-                </button>
+                <div className="flex flex-col gap-1.5 mt-1">
+                  {/* Help toggle */}
+                  <button
+                    onClick={() => {
+                      if (isHelper) { leaveCombat(player.id); removeReward(player.id) }
+                      else joinCombat(player.id)
+                    }}
+                    className={cn(
+                      'w-full py-1.5 rounded-lg text-xs font-bold transition cursor-pointer',
+                      isHelper
+                        ? 'bg-red-900 hover:bg-red-800 text-red-200'
+                        : 'bg-green-800 hover:bg-green-700 text-green-100'
+                    )}
+                  >
+                    {isHelper ? '✕ Вийти з бою' : '🤝 Допомогти'}
+                  </button>
+
+                  {/* Reward offer — only when this player is helping */}
+                  <AnimatePresence>
+                    {isHelper && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="bg-yellow-950/50 border border-yellow-800/50 rounded-lg p-2 flex flex-col gap-1.5">
+                          <p className="text-[10px] text-yellow-500 font-bold uppercase">
+                            🎁 Нагорода для {player.name}
+                          </p>
+
+                          {/* Current reward */}
+                          {reward ? (
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-yellow-300">
+                                {reward.fromVictory
+                                  ? '1 скарб з перемоги'
+                                  : players[currentPlayerIndex]?.hand.find(c => c.id === reward.cardId)?.name ?? 'картка'}
+                              </span>
+                              <button
+                                onClick={() => { removeReward(player.id); setOpenRewardFor(null) }}
+                                className="text-[10px] text-red-400 hover:text-red-300 cursor-pointer"
+                              >
+                                скасувати
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setOpenRewardFor(openRewardFor === player.id ? null : player.id)}
+                              className="text-[10px] text-yellow-400 hover:text-yellow-300 underline text-left cursor-pointer"
+                            >
+                              + Запропонувати нагороду
+                            </button>
+                          )}
+
+                          {/* Reward picker */}
+                          <AnimatePresence>
+                            {openRewardFor === player.id && (
+                              <motion.div
+                                initial={{ opacity: 0, y: -4 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -4 }}
+                                className="flex flex-col gap-1 mt-1"
+                              >
+                                {/* From victory */}
+                                <button
+                                  onClick={() => { offerReward(player.id, null); setOpenRewardFor(null) }}
+                                  className="text-left text-xs px-2 py-1 rounded bg-yellow-900/60 hover:bg-yellow-800/60 text-yellow-200 cursor-pointer"
+                                >
+                                  💰 1 скарб з перемоги
+                                </button>
+                                {/* Hand items */}
+                                {handItems.map(item => (
+                                  <button
+                                    key={item.id}
+                                    onClick={() => { offerReward(player.id, item.id); setOpenRewardFor(null) }}
+                                    className="text-left text-xs px-2 py-1 rounded bg-yellow-900/60 hover:bg-yellow-800/60 text-yellow-200 cursor-pointer"
+                                  >
+                                    🗡️ {item.name} (+{item.bonus})
+                                  </button>
+                                ))}
+                                {handItems.length === 0 && (
+                                  <p className="text-[10px] text-gray-600 italic">Немає предметів в руці</p>
+                                )}
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
               )}
             </motion.div>
           )

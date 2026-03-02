@@ -1,7 +1,9 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { useGameStore } from '../../store/gameStore'
 import { MunchkinCard } from '../cards/MunchkinCard'
+import { CombatZone } from './CombatZone'
 import { cn } from '../../utils/cn'
+import type { MonsterCard } from '../../types'
 
 function DeckPile({ count, label, category }: { count: number; label: string; category: 'door' | 'treasure' }) {
   const colors = category === 'door'
@@ -22,14 +24,16 @@ function DeckPile({ count, label, category }: { count: number; label: string; ca
 export function TableCenter() {
   const {
     phase, activeMonster, doorDeck, treasureDeck,
-    kickOpenDoor, lootRoom, endTurn,
+    kickOpenDoor, lootRoom, lookForTrouble, endTurn,
     currentCombatStrength, activeMonsterLevel, fightMonster, flee,
-    helperIds, players, monsterBonus,
+    helperIds, players, currentPlayerIndex, monsterBonus,
   } = useGameStore()
 
   const strength = currentCombatStrength()
   const monsterLevel = activeMonsterLevel()
   const helpers = helperIds.map(id => players.find(p => p.id === id)).filter(Boolean)
+  const currentPlayer = players[currentPlayerIndex]
+  const handMonsters = currentPlayer?.hand.filter(c => c.type === 'monster') as MonsterCard[] ?? []
 
   return (
     <div className="flex flex-col items-center gap-4 w-full px-4">
@@ -93,6 +97,9 @@ export function TableCenter() {
                   </p>
                 </div>
 
+                {/* Played cards on table */}
+                <CombatZone />
+
                 {/* Actions */}
                 <div className="flex gap-2">
                   <button
@@ -132,12 +139,33 @@ export function TableCenter() {
                   </button>
                 )}
                 {phase === 'loot-room' && (
-                  <button
-                    onClick={lootRoom}
-                    className="px-6 py-3 rounded-xl text-base font-bold bg-yellow-700 hover:bg-yellow-600 text-white transition cursor-pointer"
-                  >
-                    💰 Пограбувати Кімнату
-                  </button>
+                  <div className="flex flex-col items-center gap-2">
+                    <button
+                      onClick={lootRoom}
+                      className="px-6 py-3 rounded-xl text-base font-bold bg-yellow-700 hover:bg-yellow-600 text-white transition cursor-pointer"
+                    >
+                      💰 Пограбувати Кімнату
+                    </button>
+
+                    {/* Look for trouble — play monster from hand */}
+                    {handMonsters.length > 0 && (
+                      <div className="flex flex-col items-center gap-1.5">
+                        <p className="text-xs text-gray-500">або зіграй монстра з руки:</p>
+                        <div className="flex flex-wrap gap-2 justify-center">
+                          {handMonsters.map(monster => (
+                            <button
+                              key={monster.id}
+                              onClick={() => lookForTrouble(monster.id)}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-900 hover:bg-red-800 text-red-100 transition cursor-pointer border border-red-700"
+                            >
+                              😈 {monster.name}
+                              <span className="text-red-400">Рів.{monster.level}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
                 {phase === 'end-turn' && (
                   <button
