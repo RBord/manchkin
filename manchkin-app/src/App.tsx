@@ -1,34 +1,50 @@
 import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { MunchkinCard } from './components/cards/MunchkinCard'
+import { allSampleCards } from './data/sampleCards'
+import type { AnyCard } from './types'
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [selected, setSelected] = useState<string | null>(null)
+
+  const handleClick = (card: AnyCard) => {
+    setSelected((prev) => (prev === card.id ? null : card.id))
+  }
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
+    <div className="min-h-screen flex flex-col items-center justify-center gap-8 p-8">
+      {/* Header */}
+      <div className="text-center">
+        <h1 className="text-4xl font-bold tracking-tight" style={{ color: 'var(--color-gold)' }}>
+          ⚔️ МАНЧКІН
+        </h1>
+        <p className="text-gray-400 text-sm mt-1">
+          Клікни на картку — побачиш лицьову сторону
         </p>
       </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
+
+      {/* Cards grid */}
+      <div className="flex flex-wrap justify-center gap-6">
+        {allSampleCards.map((card) => (
+          <div key={card.id} className="flex flex-col items-center gap-2">
+            <MunchkinCard
+              card={card}
+              selected={selected === card.id}
+              onClick={handleClick}
+            />
+            <span className="text-xs text-gray-500 capitalize">{card.type}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Selected card info */}
+      {selected && (
+        <div className="text-center text-sm text-gray-400">
+          Обрано: <span className="text-white font-medium">
+            {allSampleCards.find((c) => c.id === selected)?.name}
+          </span>
+        </div>
+      )}
+    </div>
   )
 }
 
