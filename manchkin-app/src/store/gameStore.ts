@@ -1,6 +1,10 @@
 import { create } from 'zustand'
-import type { GameState, GamePhase, Player, AnyCard, MonsterCard, ItemCard, RaceCard, ClassCard, CombatCardEntry, HelpReward } from '../types'
-import { DOOR_DECK, TREASURE_DECK, shuffleDeck } from '../data/deck'
+import type {
+  GameState, GamePhase, Player, AnyCard, MonsterCard, ItemCard,
+  RaceCard, ClassCard, CombatCardEntry, HelpReward,
+} from '../types'
+import { DOOR_DECK, TREASURE_DECK, shuffleDeck, drawFromDeck } from '../data/deck'
+import { canEquipItem } from '../utils/equipment'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -13,27 +17,23 @@ function makePlayer(id: string, name: string): Player {
     gender: 'male',
     hand: [],
     equipped: [],
+    showcase: [],
     raceCard: null,
     classCard: null,
     gold: 0,
+    hasSoldThisTurn: false,
     isAlive: true,
   }
 }
 
-function playerCombatStrength(player: Player): number {
+function playerCombatStrength(player: Player, vsMonster?: MonsterCard): number {
   const equippedBonus = player.equipped.reduce((sum, item) => sum + item.bonus, 0)
-  return player.level + equippedBonus
-}
-
-function drawFromDeck(deck: AnyCard[], discard: AnyCard[]): { card: AnyCard; newDeck: AnyCard[]; newDiscard: AnyCard[] } {
-  if (deck.length === 0) {
-    // Reshuffle discard
-    const newDeck = shuffleDeck([...discard])
-    const [card, ...rest] = newDeck
-    return { card, newDeck: rest, newDiscard: [] }
+  let strength = player.level + equippedBonus
+  // Cleric +3 against undead
+  if (player.class === 'cleric' && vsMonster?.tags?.includes('undead')) {
+    strength += 3
   }
-  const [card, ...newDeck] = deck
-  return { card, newDeck, newDiscard: discard }
+  return strength
 }
 
 // ─── Store interface ──────────────────────────────────────────────────────────
@@ -58,7 +58,7 @@ interface GameStore extends GameState {
   joinCombat: (helperId: string) => void
   leaveCombat: (helperId: string) => void
   boostMonster: (cardId: string, byPlayerId: string) => void
-  offerReward: (helperId: string, cardId: string | null) => void
+  offerReward: (helperId: string, cardId: string | null, victoryCount?: number) => void
   removeReward: (helperId: string) => void
 
   // Sell items
@@ -74,8 +74,18 @@ interface GameStore extends GameState {
   discardCard: (cardId: string) => void
   drawTreasure: (count: number) => void
 
+  // Showcase
+  showcaseItem: (cardId: string) => void
+  removeFromShowcase: (cardId: string) => void
+
+  // Trade
+  openTrade: (toPlayerId: string) => void
+  closeTrade: () => void
+  tradeCards: (myCardId: string, theirCardId: string) => void
+
   // Turn
   endTurn: () => void
+  confirmEndTurn: () => void
 
   // Computed
   currentPlayer: () => Player
@@ -104,6 +114,8 @@ const EMPTY_STATE: GameState & { log: string[] } = {
   helpRewards: [],
   diceRoll: null,
   round: 0,
+  handLimitPending: false,
+  tradeModal: null,
   log: [],
 }
 
@@ -119,7 +131,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const doorDeck = shuffleDeck([...DOOR_DECK])
     const treasureDeck = shuffleDeck([...TREASURE_DECK])
 
-    // Deal 4 door + 4 treasure cards to each player
     let dDeck = [...doorDeck]
     let tDeck = [...treasureDeck]
 
@@ -162,6 +173,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       get().addLog(`Прокляття! ${revealedCard.name} — ${revealedCard.effect.description}`)
       const updatedPlayers = [...players]
       const p = { ...updatedPlayers[currentPlayerIndex] }
+
       switch (revealedCard.effect.type) {
         case 'lose-level':
           p.level = Math.max(1, p.level - (revealedCard.effect.value ?? 1))
@@ -178,9 +190,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
             p.equipped = p.equipped.filter(i => i.id !== best.id)
           }
           break
+        case 'lose-gold':
+          if (p.gold >= (revealedCard.effect.value ?? 300)) {
+            p.gold -= revealedCard.effect.value ?? 300
+          } else {
+            p.level = Math.max(1, p.level - 1)
+          }
+          break
       }
+
       updatedPlayers[currentPlayerIndex] = p
-      set({ phase: 'loot-room', revealedCard: null, players: updatedPlayers, doorDiscard: [...doorDiscard, revealedCard] })
+      set({
+        phase: 'loot-room', revealedCard: null, players: updatedPlayers,
+        doorDiscard: [...doorDiscard, revealedCard],
+      })
 
     } else {
       // Race or class → goes to hand
@@ -200,9 +223,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!monsterCard) return
 
     const updatedPlayers = [...players]
-    const updatedPlayer = { ...player, hand: player.hand.filter(c => c.id !== monsterId) }
-    updatedPlayers[currentPlayerIndex] = updatedPlayer
-
+    updatedPlayers[currentPlayerIndex] = { ...player, hand: player.hand.filter(c => c.id !== monsterId) }
     get().addLog(`${player.name} шукає проблем і грає: ${monsterCard.name}`)
     set({ phase: 'monster-fight', activeMonster: monsterCard, players: updatedPlayers })
   },
@@ -210,12 +231,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
   lootRoom: () => {
     const { doorDeck, doorDiscard, players, currentPlayerIndex } = get()
     const { card, newDeck, newDiscard } = drawFromDeck(doorDeck, doorDiscard)
-
     const updatedPlayers = [...players]
     const player = { ...updatedPlayers[currentPlayerIndex] }
     player.hand = [...player.hand, card]
     updatedPlayers[currentPlayerIndex] = player
-
     get().addLog(`${player.name} грабує кімнату і бере карту.`)
     set({ phase: 'end-turn', players: updatedPlayers, doorDeck: newDeck, doorDiscard: newDiscard })
   },
@@ -241,7 +260,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!card) return
 
     if (card.type === 'potion' || card.type === 'one-shot') {
-      const bonus = (card as any).effect?.value ?? 0
+      let bonus = (card as any).effect?.value ?? 0
+      // Wizard gets +1 extra from potions/spells
+      if (player.class === 'wizard' && bonus > 0) bonus += 1
       const updatedPlayers = [...players]
       updatedPlayers[currentPlayerIndex] = { ...player, hand: player.hand.filter(c => c.id !== cardId) }
       const entry: CombatCardEntry = { card, playedById: player.id, side: 'hero', bonus }
@@ -256,19 +277,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const player = players[currentPlayerIndex]
     const success = roll >= 5
     const badStuff = activeMonster?.badStuff ?? ''
-
     get().addLog(`${player.name} тікає! Кубик: ${roll} — ${success ? 'ВДАЛОСЬ!' : 'НЕ ВДАЛОСЬ!'}`)
 
     if (success) {
       set({
         diceRoll: { value: roll, success: true, badStuff: '' },
-        activeMonster: null,
-        combatBonus: 0,
-        monsterBonus: 0,
-        combatCards: [],
-        helperIds: [],
-        helpRewards: [],
-        phase: 'end-turn',
+        activeMonster: null, combatBonus: 0, monsterBonus: 0,
+        combatCards: [], helperIds: [], helpRewards: [], phase: 'end-turn',
       })
     } else {
       const updatedPlayers = [...players]
@@ -278,17 +293,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
         const best = [...p.equipped].sort((a, b) => b.bonus - a.bonus)[0]
         p.equipped = p.equipped.filter(i => i.id !== best.id)
       }
+      if (badStuff.includes('золот') && p.gold > 0) {
+        p.gold = Math.max(0, p.gold - 300)
+      }
       updatedPlayers[currentPlayerIndex] = p
       set({
         diceRoll: { value: roll, success: false, badStuff },
         players: updatedPlayers,
-        activeMonster: null,
-        combatBonus: 0,
-        monsterBonus: 0,
-        combatCards: [],
-        helperIds: [],
-        helpRewards: [],
-        phase: 'end-turn',
+        activeMonster: null, combatBonus: 0, monsterBonus: 0,
+        combatCards: [], helperIds: [], helpRewards: [], phase: 'end-turn',
       })
     }
   },
@@ -305,11 +318,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
     // Level up
     player.level = Math.min(10, player.level + 1)
 
+    // Cleric +1 level for defeating undead
+    if (player.class === 'cleric' && activeMonster.tags?.includes('undead')) {
+      player.level = Math.min(10, player.level + 1)
+      get().addLog(`${player.name} (Клірик) отримує додатковий рівень за нежить!`)
+    }
+
+    // Thief gets +1 extra treasure
+    let baseTreasures = activeMonster.treasures
+    if (player.class === 'thief') {
+      baseTreasures += 1
+      get().addLog(`${player.name} (Злодій) отримує +1 додатковий скарб!`)
+    }
+
     // Draw treasures
     let tDeck = [...treasureDeck]
     let tDiscard = [...treasureDiscard]
     const drawnTreasures: AnyCard[] = []
-    for (let i = 0; i < activeMonster.treasures; i++) {
+    for (let i = 0; i < baseTreasures; i++) {
       const { card, newDeck, newDiscard } = drawFromDeck(tDeck, tDiscard)
       drawnTreasures.push(card)
       tDeck = newDeck
@@ -323,14 +349,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
       if (helperIdx === -1) continue
       const helper = { ...updatedPlayers[helperIdx] }
 
-      if (reward.fromVictory && mainTreasures.length > 0) {
-        // Give last drawn treasure to helper
-        const [last, ...rest] = mainTreasures.slice().reverse()
-        mainTreasures = rest.reverse()
-        helper.hand = [...helper.hand, last]
-        get().addLog(`${helper.name} отримує скарб як нагороду за допомогу`)
+      if (reward.fromVictory) {
+        const count = reward.victoryCount ?? 1
+        for (let i = 0; i < count && mainTreasures.length > 0; i++) {
+          const [last, ...rest] = mainTreasures.slice().reverse()
+          mainTreasures = rest.reverse()
+          helper.hand = [...helper.hand, last]
+        }
+        get().addLog(`${helper.name} отримує ${count} скарб(и) як нагороду за допомогу`)
       } else if (reward.cardId) {
-        // Card from main player's hand already "promised" — move it now
         const promisedCard = player.hand.find(c => c.id === reward.cardId)
         if (promisedCard) {
           player.hand = player.hand.filter(c => c.id !== reward.cardId)
@@ -339,8 +366,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
         }
       }
 
-      // Elf race bonus
-      if (helper.raceCard?.name === 'Ельф') {
+      // Elf: +1 level when helping
+      if (helper.race === 'elf') {
         helper.level = Math.min(10, helper.level + 1)
         get().addLog(`${helper.name} (Ельф) отримує +1 рівень за допомогу!`)
       }
@@ -361,15 +388,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({
       phase: 'end-turn',
       players: updatedPlayers,
-      activeMonster: null,
-      combatBonus: 0,
-      monsterBonus: 0,
-      combatCards: [],
-      helperIds: [],
-      helpRewards: [],
-      diceRoll: null,
-      treasureDeck: tDeck,
-      treasureDiscard: tDiscard,
+      activeMonster: null, combatBonus: 0, monsterBonus: 0,
+      combatCards: [], helperIds: [], helpRewards: [], diceRoll: null,
+      treasureDeck: tDeck, treasureDiscard: tDiscard,
       doorDiscard: [...doorDiscard, activeMonster],
     })
   },
@@ -377,11 +398,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
   // ── Combat help ────────────────────────────────────────────────────────────
 
   joinCombat: (helperId) => {
-    const { helperIds, players } = get()
+    const { helperIds, players, activeMonster } = get()
     if (helperIds.includes(helperId)) return
     const helper = players.find(p => p.id === helperId)
     if (!helper) return
-    get().addLog(`${helper.name} приєднується до бою! (+${helper.level + helper.equipped.reduce((s, i) => s + i.bonus, 0)})`)
+    const str = playerCombatStrength(helper, activeMonster ?? undefined)
+    get().addLog(`${helper.name} приєднується до бою! (+${str})`)
     set({ helperIds: [...helperIds, helperId] })
   },
 
@@ -406,19 +428,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const entry: CombatCardEntry = { card, playedById: byPlayerId, side: 'monster', bonus: boost }
     get().addLog(`${player.name} посилює монстра ${activeMonster.name}! +${boost} рівні`)
     set({
-      players: updatedPlayers,
-      monsterBonus: monsterBonus + boost,
-      combatCards: [...combatCards, entry],
-      treasureDiscard: [...treasureDiscard, card],
+      players: updatedPlayers, monsterBonus: monsterBonus + boost,
+      combatCards: [...combatCards, entry], treasureDiscard: [...treasureDiscard, card],
     })
   },
 
-  offerReward: (helperId, cardId) => {
+  offerReward: (helperId, cardId, victoryCount = 1) => {
     const { helpRewards } = get()
     const reward: HelpReward = {
-      helperId,
-      cardId,
+      helperId, cardId,
       fromVictory: cardId === null,
+      victoryCount: cardId === null ? victoryCount : 1,
     }
     const filtered = helpRewards.filter(r => r.helperId !== helperId)
     set({ helpRewards: [...filtered, reward] })
@@ -433,6 +453,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
   sellItems: (cardIds) => {
     const { players, currentPlayerIndex, treasureDiscard } = get()
     const player = players[currentPlayerIndex]
+
+    if (player.hasSoldThisTurn) {
+      get().addLog(`${player.name} вже продавав цього ходу!`)
+      return
+    }
+
     const toSell = player.hand.filter(c => cardIds.includes(c.id) && c.type === 'item') as ItemCard[]
     if (toSell.length === 0) return
 
@@ -445,8 +471,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const p = { ...player }
     p.hand = p.hand.filter(c => !cardIds.includes(c.id))
     p.gold = goldLeft
+    p.hasSoldThisTurn = true
     if (levelsGained > 0) {
-      p.level = Math.min(9, p.level + levelsGained) // max 9 — can't win by selling
+      p.level = Math.min(9, p.level + levelsGained)
       get().addLog(`${player.name} продав речі за ${total} зол. і отримав +${levelsGained} рівень!`)
     } else {
       get().addLog(`${player.name} продав речі за ${total} зол. (${newGold}/1000 до рівня)`)
@@ -462,6 +489,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const player = players[currentPlayerIndex]
     const card = player.hand.find(c => c.id === cardId) as ItemCard | undefined
     if (!card || card.type !== 'item') return
+
+    const check = canEquipItem(player, card)
+    if (!check.ok) {
+      get().addLog(`${player.name} не може надягнути ${card.name}: ${check.reason}`)
+      return
+    }
 
     const updatedPlayers = [...players]
     const p = { ...player }
@@ -494,7 +527,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     const updatedPlayers = [...players]
     const p = { ...player }
-    // Old race card goes to discard
     const oldRace = p.raceCard
     p.hand = p.hand.filter(c => c.id !== cardId)
     p.raceCard = card
@@ -511,12 +543,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { players, currentPlayerIndex, doorDiscard } = get()
     const player = players[currentPlayerIndex]
     if (!player.raceCard) return
-
     const updatedPlayers = [...players]
     const p = { ...player }
     const old = p.raceCard!
-    p.raceCard = null
-    p.race = 'human'
+    p.raceCard = null; p.race = 'human'
     updatedPlayers[currentPlayerIndex] = p
     get().addLog(`${player.name} скинув расу ${old.name}`)
     set({ players: updatedPlayers, doorDiscard: [...doorDiscard, old] })
@@ -546,12 +576,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { players, currentPlayerIndex, doorDiscard } = get()
     const player = players[currentPlayerIndex]
     if (!player.classCard) return
-
     const updatedPlayers = [...players]
     const p = { ...player }
     const old = p.classCard!
-    p.classCard = null
-    p.class = 'none'
+    p.classCard = null; p.class = 'none'
     updatedPlayers[currentPlayerIndex] = p
     get().addLog(`${player.name} скинув клас ${old.name}`)
     set({ players: updatedPlayers, doorDiscard: [...doorDiscard, old] })
@@ -576,14 +604,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     let deck = [...treasureDeck]
     let discard = [...treasureDiscard]
     const drawn: AnyCard[] = []
-
     for (let i = 0; i < count; i++) {
       const { card, newDeck, newDiscard } = drawFromDeck(deck, discard)
       drawn.push(card)
       deck = newDeck
       discard = newDiscard
     }
-
     const updatedPlayers = [...players]
     const p = { ...updatedPlayers[currentPlayerIndex] }
     p.hand = [...p.hand, ...drawn]
@@ -591,25 +617,108 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ players: updatedPlayers, treasureDeck: deck, treasureDiscard: discard })
   },
 
+  // ── Showcase ───────────────────────────────────────────────────────────────
+
+  showcaseItem: (cardId) => {
+    const { players, currentPlayerIndex } = get()
+    const player = players[currentPlayerIndex]
+    const card = player.hand.find(c => c.id === cardId) as ItemCard | undefined
+    if (!card || card.type !== 'item') return
+
+    const updatedPlayers = [...players]
+    const p = { ...player }
+    p.hand = p.hand.filter(c => c.id !== cardId)
+    p.showcase = [...p.showcase, card]
+    updatedPlayers[currentPlayerIndex] = p
+    get().addLog(`${player.name} виставив ${card.name} на огляд`)
+    set({ players: updatedPlayers })
+  },
+
+  removeFromShowcase: (cardId) => {
+    const { players, currentPlayerIndex } = get()
+    const player = players[currentPlayerIndex]
+    const card = player.showcase.find(c => c.id === cardId)
+    if (!card) return
+    const updatedPlayers = [...players]
+    const p = { ...player }
+    p.showcase = p.showcase.filter(c => c.id !== cardId)
+    p.hand = [...p.hand, card]
+    updatedPlayers[currentPlayerIndex] = p
+    set({ players: updatedPlayers })
+  },
+
+  // ── Trade ──────────────────────────────────────────────────────────────────
+
+  openTrade: (toPlayerId) => {
+    const { players, currentPlayerIndex } = get()
+    const fromPlayerId = players[currentPlayerIndex].id
+    set({ tradeModal: { fromPlayerId, toPlayerId } })
+  },
+
+  closeTrade: () => set({ tradeModal: null }),
+
+  tradeCards: (myCardId, theirCardId) => {
+    const { players, tradeModal } = get()
+    if (!tradeModal) return
+
+    const { fromPlayerId, toPlayerId } = tradeModal
+    const fromIdx = players.findIndex(p => p.id === fromPlayerId)
+    const toIdx = players.findIndex(p => p.id === toPlayerId)
+    if (fromIdx === -1 || toIdx === -1) return
+
+    const updatedPlayers = [...players]
+    const fromP = { ...updatedPlayers[fromIdx] }
+    const toP = { ...updatedPlayers[toIdx] }
+
+    // Find cards in both hand + showcase
+    const fromCard = [...fromP.hand, ...fromP.showcase].find(c => c.id === myCardId)
+    const toCard = [...toP.hand, ...toP.showcase].find(c => c.id === theirCardId)
+    if (!fromCard || !toCard) return
+
+    // Remove from source
+    fromP.hand = fromP.hand.filter(c => c.id !== myCardId)
+    fromP.showcase = fromP.showcase.filter(c => c.id !== myCardId)
+    toP.hand = toP.hand.filter(c => c.id !== theirCardId)
+    toP.showcase = toP.showcase.filter(c => c.id !== theirCardId)
+
+    // Add to destination
+    toP.hand = [...toP.hand, fromCard]
+    fromP.hand = [...fromP.hand, toCard]
+
+    updatedPlayers[fromIdx] = fromP
+    updatedPlayers[toIdx] = toP
+    get().addLog(`${fromP.name} обмінявся карткою ${fromCard.name} на ${toCard.name} з ${toP.name}`)
+    set({ players: updatedPlayers, tradeModal: null })
+  },
+
   // ── Turn ───────────────────────────────────────────────────────────────────
 
   endTurn: () => {
+    const { players, currentPlayerIndex } = get()
+    const player = players[currentPlayerIndex]
+    const HAND_LIMIT = 8
+
+    if (player.hand.length > HAND_LIMIT) {
+      set({ handLimitPending: true })
+      get().addLog(`${player.name} має ${player.hand.length} карт — потрібно скинути до ${HAND_LIMIT}`)
+      return
+    }
+
+    get().confirmEndTurn()
+  },
+
+  confirmEndTurn: () => {
     const { players, currentPlayerIndex, round } = get()
     const nextIndex = (currentPlayerIndex + 1) % players.length
     const nextPlayer = players[nextIndex]
     const newRound = nextIndex === 0 ? round + 1 : round
 
-    // Charity: if hand > 5 cards, must discard (simplified — auto-discard oldest)
+    // Reset hasSoldThisTurn for current player
     const updatedPlayers = [...players]
-    const p = { ...updatedPlayers[currentPlayerIndex] }
-    // Hand limit is 5
-    while (p.hand.length > 5) {
-      const [, ...rest] = p.hand
-      p.hand = rest
-      get().addLog(`${p.name} скидає зайву карту (ліміт руки)`)
-      // discard logic simplified
+    updatedPlayers[currentPlayerIndex] = {
+      ...updatedPlayers[currentPlayerIndex],
+      hasSoldThisTurn: false,
     }
-    updatedPlayers[currentPlayerIndex] = p
 
     get().addLog(`Хід переходить до: ${nextPlayer.name}`)
     set({
@@ -620,6 +729,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       combatBonus: 0,
       helperIds: [],
       players: updatedPlayers,
+      handLimitPending: false,
     })
   },
 
@@ -631,14 +741,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   currentCombatStrength: () => {
-    const { players, currentPlayerIndex, combatBonus, helperIds } = get()
+    const { players, currentPlayerIndex, combatBonus, helperIds, activeMonster } = get()
     const player = players[currentPlayerIndex]
     if (!player) return 0
     const helperStrength = helperIds.reduce((sum, id) => {
       const h = players.find(p => p.id === id)
-      return h ? sum + playerCombatStrength(h) : sum
+      return h ? sum + playerCombatStrength(h, activeMonster ?? undefined) : sum
     }, 0)
-    return playerCombatStrength(player) + combatBonus + helperStrength
+    return playerCombatStrength(player, activeMonster ?? undefined) + combatBonus + helperStrength
   },
 
   activeMonsterLevel: () => {

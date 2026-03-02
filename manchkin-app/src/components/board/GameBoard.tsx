@@ -9,6 +9,8 @@ import { GameSetup } from './GameSetup'
 import { SellItemsModal } from './SellItemsModal'
 import { DoorReveal } from './DoorReveal'
 import { DiceRollOverlay } from './DiceRollOverlay'
+import { HandLimitModal } from './HandLimitModal'
+import { TradeModal } from './TradeModal'
 
 export function GameBoard() {
   const { phase, resetGame, players } = useGameStore()
@@ -64,6 +66,8 @@ export function GameBoard() {
       <SellItemsModal open={sellOpen} onClose={() => setSellOpen(false)} />
       <DoorReveal />
       <DiceRollOverlay />
+      <HandLimitModal />
+      <TradeModal />
     </div>
   )
 }

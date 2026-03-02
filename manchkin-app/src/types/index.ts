@@ -7,7 +7,16 @@ export type TreasureCardType = 'item' | 'potion' | 'one-shot'
 
 export type CardType = DoorCardType | TreasureCardType
 
-export type ItemSlot = 'head' | 'armor' | 'footwear' | 'hands-1' | 'hands-2' | 'none'
+export type ItemSlot =
+  | 'head'           // шолом
+  | 'armor'          // панцир
+  | 'footwear'       // чоботи
+  | 'gloves'         // рукавиці
+  | 'weapon-1h'      // однорукова зброя / щит
+  | 'weapon-2h'      // дворучна зброя
+  | 'weapon-ranged'  // метальна зброя
+  | 'accessory'      // аксесуар (кільце, кулон)
+  | 'none'           // без слоту
 
 export interface BaseCard {
   id: string
@@ -26,6 +35,8 @@ export interface MonsterCard extends BaseCard {
   badStuff: string
   treasures: number
   bonuses?: CardBonus[]
+  legendary?: boolean
+  tags?: string[]   // e.g. 'undead', 'dragon', 'demon'
 }
 
 export interface CurseCard extends BaseCard {
@@ -55,6 +66,9 @@ export interface ItemCard extends BaseCard {
   slot: ItemSlot
   bigItem?: boolean
   value: number
+  legendary?: boolean
+  requiredRace?: Race[]
+  requiredClass?: Class[]
 }
 
 export interface PotionCard extends BaseCard {
@@ -62,6 +76,8 @@ export interface PotionCard extends BaseCard {
   type: 'potion' | 'one-shot'
   effect: CardEffect
   value?: number
+  requiredRace?: Race[]
+  requiredClass?: Class[]
 }
 
 export type AnyCard = MonsterCard | CurseCard | RaceCard | ClassCard | ItemCard | PotionCard
@@ -69,7 +85,7 @@ export type AnyCard = MonsterCard | CurseCard | RaceCard | ClassCard | ItemCard 
 // ─── Effect & Bonus Types ─────────────────────────────────────────────────────
 
 export interface CardEffect {
-  type: 'lose-level' | 'lose-item' | 'lose-race' | 'lose-class' | 'lose-hand' | 'combat-bonus'
+  type: 'lose-level' | 'lose-item' | 'lose-race' | 'lose-class' | 'lose-hand' | 'combat-bonus' | 'lose-gold'
   value?: number
   description: string
 }
@@ -94,9 +110,11 @@ export interface Player {
   gender: Gender
   hand: AnyCard[]
   equipped: ItemCard[]
+  showcase: ItemCard[]      // items on display (don't count toward hand limit)
   raceCard: RaceCard | null
   classCard: ClassCard | null
   gold: number
+  hasSoldThisTurn: boolean
   isAlive: boolean
 }
 
@@ -121,8 +139,9 @@ export interface CombatCardEntry {
 
 export interface HelpReward {
   helperId: string
-  cardId: string | null    // null = "1 скарб з перемоги"
+  cardId: string | null    // null = "від перемоги"
   fromVictory: boolean
+  victoryCount: number     // how many victory treasures to give (default 1)
 }
 
 export interface DiceRollResult {
@@ -148,4 +167,6 @@ export interface GameState {
   helpRewards: HelpReward[]
   diceRoll: DiceRollResult | null
   round: number
+  handLimitPending: boolean
+  tradeModal: { fromPlayerId: string; toPlayerId: string } | null
 }

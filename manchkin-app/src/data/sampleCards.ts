@@ -57,7 +57,7 @@ export const sampleItem: ItemCard = {
   description: 'Великий молот, що світиться магічним блакитним світлом. Або це просто фарба.',
   flavor: 'Прийшов. Побачив. Вдарив.',
   bonus: 5,
-  slot: 'hands-1',
+  slot: 'weapon-1h',
   bigItem: false,
   value: 600,
 }

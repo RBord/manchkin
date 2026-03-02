@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useGameStore } from '../../store/gameStore'
 import { MunchkinCard } from '../cards/MunchkinCard'
 import { RaceClassPanel } from './RaceClassPanel'
+import { EquipmentBoard } from './EquipmentBoard'
+import { isItemRestricted } from '../../utils/equipment'
 import type { AnyCard, ItemCard } from '../../types'
 import { cn } from '../../utils/cn'
 
@@ -13,14 +15,27 @@ const CLASS_ICONS: Record<string, string> = {
   none: '—', warrior: '⚔️', wizard: '🔮', thief: '🗝️', cleric: '✝️',
 }
 
+type HandTab = 'all' | 'monsters' | 'items' | 'potions' | 'other'
+type MainTab = 'hand' | 'equipped' | 'showcase'
+
+const HAND_LIMIT = 8
+
 export function PlayerArea() {
-  const { players, currentPlayerIndex, phase, equipItem, equipRace, equipClass, discardCard, playItemInCombat } = useGameStore()
+  const {
+    players, currentPlayerIndex, phase,
+    equipItem, equipRace, equipClass, discardCard, playItemInCombat,
+    showcaseItem, removeFromShowcase,
+  } = useGameStore()
+
   const player = players[currentPlayerIndex]
-  const [activeTab, setActiveTab] = useState<'hand' | 'equipped'>('hand')
+  const [mainTab, setMainTab] = useState<MainTab>('hand')
+  const [handTab, setHandTab] = useState<HandTab>('all')
 
   if (!player) return null
 
-  const handleCardClick = (card: AnyCard) => {
+  const strength = useGameStore.getState().currentCombatStrength()
+
+  const handleCardAction = (card: AnyCard) => {
     if (phase === 'monster-fight' && (card.type === 'potion' || card.type === 'one-shot')) {
       playItemInCombat(card.id)
     } else if (phase !== 'monster-fight' && card.type === 'item') {
@@ -28,19 +43,47 @@ export function PlayerArea() {
     }
   }
 
+  // Filter hand cards by tab
+  const filteredHand = player.hand.filter(card => {
+    if (handTab === 'all') return true
+    if (handTab === 'monsters') return card.type === 'monster'
+    if (handTab === 'items') return card.type === 'item'
+    if (handTab === 'potions') return card.type === 'potion' || card.type === 'one-shot'
+    if (handTab === 'other') return card.type === 'curse' || card.type === 'race' || card.type === 'class'
+    return true
+  })
+
+  const handOverLimit = player.hand.length > HAND_LIMIT
+  const monstersCount = player.hand.filter(c => c.type === 'monster').length
+  const itemsCount = player.hand.filter(c => c.type === 'item').length
+  const potionsCount = player.hand.filter(c => c.type === 'potion' || c.type === 'one-shot').length
+  const otherCount = player.hand.filter(c => ['curse', 'race', 'class'].includes(c.type)).length
+
   return (
     <div className="flex flex-col gap-3 w-full">
       {/* Race & Class panel */}
       <RaceClassPanel />
+
       {/* Player stats bar */}
-      <div className="flex items-center gap-4 px-4 py-2 bg-white/5 rounded-xl border border-white/10">
+      <div className="flex items-center gap-4 px-4 py-2 bg-white/5 rounded-xl border border-white/10 flex-wrap gap-y-2">
         <div className="flex items-center gap-2">
           <span className="text-2xl">{RACE_ICONS[player.race]}</span>
           <div>
             <p className="text-white font-bold text-sm">{player.name}</p>
-            <p className="text-gray-500 text-xs capitalize">{player.race} · {CLASS_ICONS[player.class]} {player.class}</p>
+            <p className="text-gray-500 text-xs capitalize">
+              {player.race} · {CLASS_ICONS[player.class]} {player.class !== 'none' ? player.class : 'без класу'}
+            </p>
           </div>
         </div>
+
+        {/* Gold */}
+        {player.gold > 0 && (
+          <div className="flex items-center gap-1 px-2 py-1 bg-yellow-950/60 border border-yellow-800/50 rounded-lg">
+            <span className="text-yellow-500 text-sm">💰</span>
+            <span className="text-yellow-400 font-bold text-sm">{player.gold}</span>
+            <span className="text-yellow-700 text-xs">/ 1000 зол.</span>
+          </div>
+        )}
 
         {/* Level track */}
         <div className="flex items-center gap-1 ml-auto">
@@ -63,116 +106,214 @@ export function PlayerArea() {
 
         {/* Combat strength */}
         <div className="text-right">
-          <p className="text-xs text-gray-500">Сила в бою</p>
-          <p className="text-yellow-400 font-bold text-lg leading-none">
-            {useGameStore.getState().currentCombatStrength()}
-          </p>
+          <p className="text-xs text-gray-500">Сила</p>
+          <p className="text-yellow-400 font-bold text-lg leading-none">{strength}</p>
         </div>
       </div>
 
-      {/* Tabs: Hand / Equipped */}
-      <div className="flex gap-2">
-        {(['hand', 'equipped'] as const).map(tab => (
+      {/* Main tabs */}
+      <div className="flex gap-2 flex-wrap">
+        {([
+          ['hand', `🃏 Рука (${player.hand.length}/${HAND_LIMIT})`],
+          ['equipped', `🛡️ Екіп (${player.equipped.length})`],
+          ['showcase', `🖼️ Вітрина (${player.showcase.length})`],
+        ] as const).map(([tab, label]) => (
           <button
             key={tab}
-            onClick={() => setActiveTab(tab)}
+            onClick={() => setMainTab(tab)}
             className={cn(
               'px-4 py-1.5 rounded-lg text-sm font-medium transition cursor-pointer',
-              activeTab === tab
-                ? 'bg-white/15 text-white'
-                : 'bg-white/5 text-gray-500 hover:text-gray-300'
+              mainTab === tab ? 'bg-white/15 text-white' : 'bg-white/5 text-gray-500 hover:text-gray-300',
+              tab === 'hand' && handOverLimit && 'border border-orange-600'
             )}
           >
-            {tab === 'hand' ? `🃏 Рука (${player.hand.length})` : `🛡️ Екіп (${player.equipped.length})`}
+            {label}
+            {tab === 'hand' && handOverLimit && (
+              <span className="ml-1 text-orange-400 font-bold">!</span>
+            )}
           </button>
         ))}
       </div>
 
-      {/* Cards */}
-      <div className="flex flex-wrap gap-3 min-h-[260px] p-3 bg-black/20 rounded-xl border border-white/5">
-        <AnimatePresence>
-          {activeTab === 'hand' && player.hand.map((card, i) => (
-            <motion.div
-              key={card.id}
-              initial={{ opacity: 0, y: 20, scale: 0.9 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.8 }}
-              transition={{ delay: i * 0.04 }}
+      {/* Hand sub-tabs */}
+      {mainTab === 'hand' && (
+        <div className="flex gap-1 flex-wrap">
+          {([
+            ['all', `Всі (${player.hand.length})`],
+            ['monsters', `👹 Монстри${monstersCount > 0 ? ` (${monstersCount})` : ''}`],
+            ['items', `🗡️ Предмети${itemsCount > 0 ? ` (${itemsCount})` : ''}`],
+            ['potions', `🧪 Зілля${potionsCount > 0 ? ` (${potionsCount})` : ''}`],
+            ['other', `📜 Інше${otherCount > 0 ? ` (${otherCount})` : ''}`],
+          ] as const).map(([tab, label]) => (
+            <button
+              key={tab}
+              onClick={() => setHandTab(tab)}
+              className={cn(
+                'px-3 py-1 rounded-lg text-xs transition cursor-pointer',
+                handTab === tab ? 'bg-white/10 text-white' : 'text-gray-600 hover:text-gray-400'
+              )}
             >
-              <div className="flex flex-col items-center gap-1">
-                <MunchkinCard
-                  card={card}
-                  faceUp
-                  onClick={handleCardClick}
-                />
-                <div className="flex gap-1 flex-wrap justify-center">
-                  {card.type === 'item' && phase !== 'monster-fight' && (
-                    <button
-                      onClick={() => equipItem(card.id)}
-                      className="text-[10px] px-2 py-0.5 bg-yellow-800 hover:bg-yellow-700 text-yellow-200 rounded transition cursor-pointer"
-                    >
-                      + Екіп
-                    </button>
-                  )}
-                  {card.type === 'race' && (
-                    <button
-                      onClick={() => equipRace(card.id)}
-                      className="text-[10px] px-2 py-0.5 bg-green-800 hover:bg-green-700 text-green-200 rounded transition cursor-pointer"
-                    >
-                      🧝 Раса
-                    </button>
-                  )}
-                  {card.type === 'class' && (
-                    <button
-                      onClick={() => equipClass(card.id)}
-                      className="text-[10px] px-2 py-0.5 bg-blue-800 hover:bg-blue-700 text-blue-200 rounded transition cursor-pointer"
-                    >
-                      ⚔️ Клас
-                    </button>
-                  )}
-                  {(card.type === 'potion' || card.type === 'one-shot') && phase === 'monster-fight' && (
-                    <button
-                      onClick={() => playItemInCombat(card.id)}
-                      className="text-[10px] px-2 py-0.5 bg-cyan-800 hover:bg-cyan-700 text-cyan-200 rounded transition cursor-pointer"
-                    >
-                      ▶ Зіграти
-                    </button>
-                  )}
-                  <button
-                    onClick={() => discardCard(card.id)}
-                    className="text-[10px] px-2 py-0.5 bg-red-900 hover:bg-red-800 text-red-300 rounded transition cursor-pointer"
-                  >
-                    × Скинути
-                  </button>
-                </div>
-              </div>
-            </motion.div>
+              {label}
+            </button>
           ))}
+        </div>
+      )}
 
-          {activeTab === 'equipped' && player.equipped.map((card, i) => (
+      {/* Content area */}
+      <div className="min-h-[200px] p-3 bg-black/20 rounded-xl border border-white/5">
+        <AnimatePresence mode="wait">
+          {/* ── Hand ── */}
+          {mainTab === 'hand' && (
             <motion.div
-              key={card.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
+              key="hand"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ delay: i * 0.04 }}
+              className="flex flex-wrap gap-3"
             >
-              <div className="flex flex-col items-center gap-1">
-                <MunchkinCard card={card} faceUp noFlip interactive={false} />
-                <span className="text-xs text-yellow-400">+{(card as ItemCard).bonus}</span>
-              </div>
-            </motion.div>
-          ))}
+              {filteredHand.map((card, i) => {
+                const isItem = card.type === 'item'
+                const restricted = isItem && isItemRestricted(player, card as ItemCard)
 
-          {activeTab === 'hand' && player.hand.length === 0 && (
-            <div className="flex-1 flex items-center justify-center text-gray-600 text-sm">
-              Рука порожня
-            </div>
+                return (
+                  <motion.div
+                    key={card.id}
+                    initial={{ opacity: 0, y: 20, scale: 0.9 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.8 }}
+                    transition={{ delay: i * 0.03 }}
+                    className="flex flex-col items-center gap-1"
+                  >
+                    <MunchkinCard card={card} faceUp onClick={handleCardAction} />
+
+                    {/* Action buttons */}
+                    <div className="flex gap-1 flex-wrap justify-center">
+                      {isItem && phase !== 'monster-fight' && !restricted && (
+                        <button
+                          onClick={() => equipItem(card.id)}
+                          className="text-[10px] px-2 py-0.5 bg-yellow-800 hover:bg-yellow-700 text-yellow-200 rounded transition cursor-pointer"
+                        >
+                          + Екіп
+                        </button>
+                      )}
+                      {isItem && restricted && (
+                        <button
+                          onClick={() => showcaseItem(card.id)}
+                          className="text-[10px] px-2 py-0.5 bg-purple-800 hover:bg-purple-700 text-purple-200 rounded transition cursor-pointer"
+                          title="Виставити на огляд — не займає руку"
+                        >
+                          🖼️ Вітрина
+                        </button>
+                      )}
+                      {card.type === 'race' && (
+                        <button
+                          onClick={() => equipRace(card.id)}
+                          className="text-[10px] px-2 py-0.5 bg-green-800 hover:bg-green-700 text-green-200 rounded transition cursor-pointer"
+                        >
+                          🧝 Раса
+                        </button>
+                      )}
+                      {card.type === 'class' && (
+                        <button
+                          onClick={() => equipClass(card.id)}
+                          className="text-[10px] px-2 py-0.5 bg-blue-800 hover:bg-blue-700 text-blue-200 rounded transition cursor-pointer"
+                        >
+                          ⚔️ Клас
+                        </button>
+                      )}
+                      {(card.type === 'potion' || card.type === 'one-shot') && phase === 'monster-fight' && (
+                        <button
+                          onClick={() => playItemInCombat(card.id)}
+                          className="text-[10px] px-2 py-0.5 bg-cyan-800 hover:bg-cyan-700 text-cyan-200 rounded transition cursor-pointer"
+                        >
+                          ▶ Зіграти
+                        </button>
+                      )}
+                      <button
+                        onClick={() => discardCard(card.id)}
+                        className="text-[10px] px-2 py-0.5 bg-red-900 hover:bg-red-800 text-red-300 rounded transition cursor-pointer"
+                      >
+                        × Скинути
+                      </button>
+                    </div>
+
+                    {/* Restriction label */}
+                    {restricted && (
+                      <p className="text-[9px] text-orange-500 text-center">
+                        {(card as ItemCard).requiredRace && `Тільки ${(card as ItemCard).requiredRace!.join('/')}`}
+                        {(card as ItemCard).requiredClass && `Тільки ${(card as ItemCard).requiredClass!.join('/')}`}
+                      </p>
+                    )}
+                  </motion.div>
+                )
+              })}
+
+              {filteredHand.length === 0 && (
+                <div className="flex-1 flex items-center justify-center text-gray-600 text-sm py-8">
+                  {player.hand.length === 0 ? 'Рука порожня' : 'Немає карт у цій категорії'}
+                </div>
+              )}
+            </motion.div>
           )}
-          {activeTab === 'equipped' && player.equipped.length === 0 && (
-            <div className="flex-1 flex items-center justify-center text-gray-600 text-sm">
-              Нічого не надето
-            </div>
+
+          {/* ── Equipped ── */}
+          {mainTab === 'equipped' && (
+            <motion.div
+              key="equipped"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+            >
+              <EquipmentBoard />
+            </motion.div>
+          )}
+
+          {/* ── Showcase ── */}
+          {mainTab === 'showcase' && (
+            <motion.div
+              key="showcase"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="flex flex-col gap-3"
+            >
+              <p className="text-xs text-gray-500">
+                Речі на вітрині — видно всім гравцям, не займають руку. Можна обміняти.
+              </p>
+
+              {player.showcase.length === 0 ? (
+                <p className="text-gray-600 text-sm text-center py-6">Вітрина порожня</p>
+              ) : (
+                <div className="flex flex-wrap gap-3">
+                  {player.showcase.map((card, i) => (
+                    <motion.div
+                      key={card.id}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ delay: i * 0.04 }}
+                      className="flex flex-col items-center gap-1"
+                    >
+                      <MunchkinCard card={card} faceUp noFlip interactive={false} />
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => equipItem(card.id)}
+                          className="text-[10px] px-2 py-0.5 bg-yellow-800 hover:bg-yellow-700 text-yellow-200 rounded transition cursor-pointer"
+                        >
+                          + Екіп
+                        </button>
+                        <button
+                          onClick={() => removeFromShowcase(card.id)}
+                          className="text-[10px] px-2 py-0.5 bg-white/10 hover:bg-white/15 text-gray-300 rounded transition cursor-pointer"
+                        >
+                          ← В руку
+                        </button>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
           )}
         </AnimatePresence>
       </div>

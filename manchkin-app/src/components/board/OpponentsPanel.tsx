@@ -16,6 +16,7 @@ export function OpponentsPanel() {
     players, currentPlayerIndex, phase,
     helperIds, joinCombat, leaveCombat,
     helpRewards, offerReward, removeReward,
+    openTrade,
   } = useGameStore()
 
   const [openRewardFor, setOpenRewardFor] = useState<string | null>(null)
@@ -84,7 +85,7 @@ export function OpponentsPanel() {
 
               {/* Stats */}
               <div className="flex items-center gap-3 text-xs flex-wrap">
-                <span className="text-yellow-400">⭐ {player.level} рівень</span>
+                <span className="text-yellow-400">⭐ {player.level} рів.</span>
                 <span className="text-blue-400">⚔️ {combatStr} сила</span>
                 {player.equipped.length > 0 && (
                   <span className="text-gray-500">🛡️ {player.equipped.length} речей</span>
@@ -98,8 +99,16 @@ export function OpponentsPanel() {
               {player.equipped.length > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {player.equipped.map(item => (
-                    <span key={item.id} className="text-[10px] px-2 py-0.5 bg-yellow-950 border border-yellow-800 text-yellow-400 rounded-full">
-                      {item.name} +{item.bonus}
+                    <span
+                      key={item.id}
+                      className={cn(
+                        'text-[10px] px-2 py-0.5 rounded-full border',
+                        item.legendary
+                          ? 'bg-yellow-950 border-yellow-600 text-yellow-300'
+                          : 'bg-yellow-950 border-yellow-800 text-yellow-400'
+                      )}
+                    >
+                      {item.legendary && '★ '}{item.name} +{item.bonus}
                     </span>
                   ))}
                 </div>
@@ -121,10 +130,33 @@ export function OpponentsPanel() {
                 </div>
               )}
 
+              {/* Showcase items */}
+              {player.showcase.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  <p className="text-[9px] text-purple-400 uppercase tracking-wider">На вітрині</p>
+                  <div className="flex flex-wrap gap-1">
+                    {player.showcase.map(item => (
+                      <div key={item.id} className="flex items-center gap-1">
+                        <span className="text-[10px] px-2 py-0.5 bg-purple-950 border border-purple-800 text-purple-300 rounded-full">
+                          🖼️ {item.name} +{item.bonus}
+                          {item.requiredRace && <span className="text-purple-500 ml-1">({item.requiredRace.join('/')})</span>}
+                          {item.requiredClass && <span className="text-purple-500 ml-1">({item.requiredClass.join('/')})</span>}
+                        </span>
+                        <button
+                          onClick={() => openTrade(player.id)}
+                          className="text-[9px] text-blue-400 hover:text-blue-300 underline cursor-pointer"
+                        >
+                          обмін
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Combat actions */}
               {canHelp && (
                 <div className="flex flex-col gap-1.5 mt-1">
-                  {/* Help toggle */}
                   <button
                     onClick={() => {
                       if (isHelper) { leaveCombat(player.id); removeReward(player.id) }
@@ -140,7 +172,7 @@ export function OpponentsPanel() {
                     {isHelper ? '✕ Вийти з бою' : '🤝 Допомогти'}
                   </button>
 
-                  {/* Reward offer — only when this player is helping */}
+                  {/* Reward offer — only when helping */}
                   <AnimatePresence>
                     {isHelper && (
                       <motion.div
@@ -154,12 +186,11 @@ export function OpponentsPanel() {
                             🎁 Нагорода для {player.name}
                           </p>
 
-                          {/* Current reward */}
                           {reward ? (
                             <div className="flex items-center justify-between">
                               <span className="text-xs text-yellow-300">
                                 {reward.fromVictory
-                                  ? '1 скарб з перемоги'
+                                  ? `${reward.victoryCount} скарб(и) з перемоги`
                                   : players[currentPlayerIndex]?.hand.find(c => c.id === reward.cardId)?.name ?? 'картка'}
                               </span>
                               <button
@@ -187,13 +218,16 @@ export function OpponentsPanel() {
                                 exit={{ opacity: 0, y: -4 }}
                                 className="flex flex-col gap-1 mt-1"
                               >
-                                {/* From victory */}
-                                <button
-                                  onClick={() => { offerReward(player.id, null); setOpenRewardFor(null) }}
-                                  className="text-left text-xs px-2 py-1 rounded bg-yellow-900/60 hover:bg-yellow-800/60 text-yellow-200 cursor-pointer"
-                                >
-                                  💰 1 скарб з перемоги
-                                </button>
+                                {/* From victory — multiple counts */}
+                                {[1, 2, 3].map(count => (
+                                  <button
+                                    key={count}
+                                    onClick={() => { offerReward(player.id, null, count); setOpenRewardFor(null) }}
+                                    className="text-left text-xs px-2 py-1 rounded bg-yellow-900/60 hover:bg-yellow-800/60 text-yellow-200 cursor-pointer"
+                                  >
+                                    💰 {count} скарб{count === 1 ? '' : count < 5 ? 'и' : 'ів'} з перемоги
+                                  </button>
+                                ))}
                                 {/* Hand items */}
                                 {handItems.map(item => (
                                   <button
@@ -215,6 +249,16 @@ export function OpponentsPanel() {
                     )}
                   </AnimatePresence>
                 </div>
+              )}
+
+              {/* Trade button (outside combat) */}
+              {!canHelp && (
+                <button
+                  onClick={() => openTrade(player.id)}
+                  className="w-full py-1.5 rounded-lg text-xs font-bold bg-blue-900/50 hover:bg-blue-800/50 text-blue-300 border border-blue-800/50 transition cursor-pointer mt-1"
+                >
+                  🤝 Запропонувати обмін
+                </button>
               )}
             </motion.div>
           )
