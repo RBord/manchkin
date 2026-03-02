@@ -139,9 +139,10 @@ function BadStuff({ card }: { card: AnyCard }) {
 interface CardFrontProps {
   card: AnyCard
   className?: string
+  onInfo?: (e: React.MouseEvent) => void
 }
 
-export function CardFront({ card, className }: CardFrontProps) {
+export function CardFront({ card, className, onInfo }: CardFrontProps) {
   const cfg = TYPE_CONFIG[card.type]
 
   return (
@@ -159,7 +160,21 @@ export function CardFront({ card, className }: CardFrontProps) {
         <span className={cn('text-[10px] font-bold tracking-widest uppercase', cfg.accent)}>
           {cfg.label}
         </span>
-        <span className="text-base leading-none">{cfg.icon}</span>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={onInfo}
+            className={cn(
+              'w-5 h-5 rounded-full flex items-center justify-center',
+              'bg-white/10 hover:bg-white/25 transition-colors',
+              'text-[11px] font-bold leading-none',
+              cfg.accent
+            )}
+            aria-label="Детальна інформація"
+          >
+            i
+          </button>
+          <span className="text-base leading-none">{cfg.icon}</span>
+        </div>
       </div>
 
       {/* Image area */}

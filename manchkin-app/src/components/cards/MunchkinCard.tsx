@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import type { AnyCard } from '../../types'
 import { CardFront } from './CardFront'
 import { CardBack } from './CardBack'
+import { CardInfoModal } from './CardInfoModal'
 import { cn } from '../../utils/cn'
 
 interface MunchkinCardProps {
@@ -30,57 +31,69 @@ export function MunchkinCard({
   noFlip = false,
 }: MunchkinCardProps) {
   const [flipped, setFlipped] = useState(faceUp)
+  const [infoOpen, setInfoOpen] = useState(false)
 
-  const handleClick = () => {
+  const handleCardClick = () => {
     if (!noFlip) setFlipped((f) => !f)
     onClick?.(card)
   }
 
+  const handleInfoClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setInfoOpen(true)
+  }
+
   return (
-    <div
-      className={cn(
-        'relative select-none',
-        // Fixed card size (standard card ratio ~1:1.45)
-        'w-[160px] h-[232px]',
-        interactive && 'cursor-pointer',
-        className
-      )}
-      style={{ perspective: '1000px' }}
-      onClick={handleClick}
-    >
-      {/* Glow on selected */}
-      {selected && (
-        <div
-          className="absolute -inset-1 rounded-xl blur-md opacity-60 pointer-events-none z-0"
-          style={{ background: 'var(--color-gold)' }}
-        />
-      )}
-
-      {/* Hover lift */}
-      <motion.div
-        className="relative w-full h-full z-10"
-        style={{ transformStyle: 'preserve-3d' }}
-        animate={{ rotateY: flipped ? 0 : 180 }}
-        whileHover={interactive ? { y: -6, scale: 1.03 } : undefined}
-        transition={{
-          rotateY: { duration: 0.55, ease: [0.4, 0, 0.2, 1] },
-          y: { duration: 0.18 },
-          scale: { duration: 0.18 },
-        }}
+    <>
+      <div
+        className={cn(
+          'relative select-none',
+          'w-[160px] h-[232px]',
+          interactive && 'cursor-pointer',
+          className
+        )}
+        style={{ perspective: '1000px' }}
+        onClick={handleCardClick}
       >
-        {/* Front face */}
-        <div className="absolute inset-0" style={{ backfaceVisibility: 'hidden' }}>
-          <CardFront card={card} />
-        </div>
+        {/* Glow on selected */}
+        {selected && (
+          <div
+            className="absolute -inset-1 rounded-xl blur-md opacity-60 pointer-events-none z-0"
+            style={{ background: 'var(--color-gold)' }}
+          />
+        )}
 
-        {/* Back face */}
-        <div
-          className="absolute inset-0"
-          style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
+        <motion.div
+          className="relative w-full h-full z-10"
+          style={{ transformStyle: 'preserve-3d' }}
+          animate={{ rotateY: flipped ? 0 : 180 }}
+          whileHover={interactive ? { y: -6, scale: 1.03 } : undefined}
+          transition={{
+            rotateY: { duration: 0.55, ease: [0.4, 0, 0.2, 1] },
+            y: { duration: 0.18 },
+            scale: { duration: 0.18 },
+          }}
         >
-          <CardBack category={card.category} />
-        </div>
-      </motion.div>
-    </div>
+          {/* Front face */}
+          <div className="absolute inset-0" style={{ backfaceVisibility: 'hidden' }}>
+            <CardFront card={card} onInfo={handleInfoClick} />
+          </div>
+
+          {/* Back face */}
+          <div
+            className="absolute inset-0"
+            style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
+          >
+            <CardBack category={card.category} />
+          </div>
+        </motion.div>
+      </div>
+
+      <CardInfoModal
+        card={card}
+        open={infoOpen}
+        onClose={() => setInfoOpen(false)}
+      />
+    </>
   )
 }
