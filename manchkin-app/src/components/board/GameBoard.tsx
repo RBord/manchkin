@@ -7,6 +7,7 @@ import { OpponentsPanel } from './OpponentsPanel'
 import { GameLog } from './GameLog'
 import { GameSetup } from './GameSetup'
 import { SellItemsModal } from './SellItemsModal'
+import { DoorReveal } from './DoorReveal'
 
 export function GameBoard() {
   const { phase, resetGame, players } = useGameStore()
@@ -60,6 +61,7 @@ export function GameBoard() {
       </main>
 
       <SellItemsModal open={sellOpen} onClose={() => setSellOpen(false)} />
+      <DoorReveal />
     </div>
   )
 }

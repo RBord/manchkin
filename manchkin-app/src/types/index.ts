@@ -105,6 +105,7 @@ export interface Player {
 export type GamePhase =
   | 'waiting'
   | 'kick-open-door'
+  | 'door-reveal'
   | 'monster-fight'
   | 'loot-room'
   | 'look-for-trouble'
@@ -120,6 +121,7 @@ export interface GameState {
   doorDiscard: AnyCard[]
   treasureDiscard: AnyCard[]
   activeMonster: MonsterCard | null
+  revealedCard: AnyCard | null
   combatBonus: number
   monsterBonus: number
   helperIds: string[]

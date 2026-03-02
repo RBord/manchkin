@@ -45,6 +45,7 @@ interface GameStore extends GameState {
 
   // Phase actions
   kickOpenDoor: () => void
+  acknowledgeReveal: () => void
   lookForTrouble: (monsterId: string) => void
   lootRoom: () => void
 
@@ -92,6 +93,7 @@ const EMPTY_STATE: GameState & { log: string[] } = {
   doorDiscard: [],
   treasureDiscard: [],
   activeMonster: null,
+  revealedCard: null,
   combatBonus: 0,
   monsterBonus: 0,
   helperIds: [],
@@ -137,28 +139,51 @@ export const useGameStore = create<GameStore>((set, get) => ({
   kickOpenDoor: () => {
     const { doorDeck, doorDiscard, players, currentPlayerIndex } = get()
     const { card, newDeck, newDiscard } = drawFromDeck(doorDeck, doorDiscard)
+    get().addLog(`${players[currentPlayerIndex].name} відкриває двері...`)
+    set({ phase: 'door-reveal', revealedCard: card, doorDeck: newDeck, doorDiscard: newDiscard })
+  },
 
-    if (card.type === 'monster') {
-      get().addLog(`${players[currentPlayerIndex].name} відкрив двері — монстр! ${card.name}`)
-      set({ phase: 'monster-fight', activeMonster: card as MonsterCard, doorDeck: newDeck, doorDiscard: newDiscard })
-    } else if (card.type === 'curse') {
-      get().addLog(`${players[currentPlayerIndex].name} відкрив двері — прокляття! ${card.name}`)
-      // Apply curse effect (simplified)
+  acknowledgeReveal: () => {
+    const { revealedCard, players, currentPlayerIndex, doorDiscard } = get()
+    if (!revealedCard) return
+    const player = players[currentPlayerIndex]
+
+    if (revealedCard.type === 'monster') {
+      get().addLog(`Монстр! ${revealedCard.name} — рівень ${(revealedCard as MonsterCard).level}`)
+      set({ phase: 'monster-fight', activeMonster: revealedCard as MonsterCard, revealedCard: null })
+
+    } else if (revealedCard.type === 'curse') {
+      get().addLog(`Прокляття! ${revealedCard.name} — ${revealedCard.effect.description}`)
       const updatedPlayers = [...players]
-      const player = { ...updatedPlayers[currentPlayerIndex] }
-      if (card.effect.type === 'lose-level' && player.level > 1) {
-        player.level = Math.max(1, player.level - (card.effect.value ?? 1))
+      const p = { ...updatedPlayers[currentPlayerIndex] }
+      switch (revealedCard.effect.type) {
+        case 'lose-level':
+          p.level = Math.max(1, p.level - (revealedCard.effect.value ?? 1))
+          break
+        case 'lose-class':
+          if (p.classCard) { p.classCard = null; p.class = 'none' }
+          break
+        case 'lose-race':
+          if (p.raceCard) { p.raceCard = null; p.race = 'human' }
+          break
+        case 'lose-item':
+          if (p.equipped.length > 0) {
+            const best = [...p.equipped].sort((a, b) => b.bonus - a.bonus)[0]
+            p.equipped = p.equipped.filter(i => i.id !== best.id)
+          }
+          break
       }
-      updatedPlayers[currentPlayerIndex] = player
-      set({ phase: 'loot-room', players: updatedPlayers, doorDeck: newDeck, doorDiscard: [...newDiscard, card] })
+      updatedPlayers[currentPlayerIndex] = p
+      set({ phase: 'loot-room', revealedCard: null, players: updatedPlayers, doorDiscard: [...doorDiscard, revealedCard] })
+
     } else {
-      // Race or class — goes to hand
-      get().addLog(`${players[currentPlayerIndex].name} знайшов: ${card.name}`)
+      // Race or class → goes to hand
+      get().addLog(`${player.name} знайшов: ${revealedCard.name} — іде в руку`)
       const updatedPlayers = [...players]
-      const player = { ...updatedPlayers[currentPlayerIndex] }
-      player.hand = [...player.hand, card]
-      updatedPlayers[currentPlayerIndex] = player
-      set({ phase: 'loot-room', players: updatedPlayers, doorDeck: newDeck, doorDiscard: newDiscard })
+      const p = { ...updatedPlayers[currentPlayerIndex] }
+      p.hand = [...p.hand, revealedCard]
+      updatedPlayers[currentPlayerIndex] = p
+      set({ phase: 'loot-room', revealedCard: null, players: updatedPlayers })
     }
   },
 
@@ -545,6 +570,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 export const PHASE_LABELS: Record<GamePhase, string> = {
   waiting:          '⏳ Очікування',
   'kick-open-door': '🚪 Відкрий Двері',
+  'door-reveal':    '🎴 Відкриття',
   'monster-fight':  '⚔️ Бій з Монстром',
   'loot-room':      '💰 Пограбуй Кімнату',
   'look-for-trouble': '😈 Шукай Проблем',
