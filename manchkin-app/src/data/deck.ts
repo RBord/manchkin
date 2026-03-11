@@ -1,6 +1,7 @@
 import type {
   MonsterCard, CurseCard, RaceCard, ClassCard, ItemCard, PotionCard, AnyCard,
 } from '../types'
+import forestTroll from '../assets/arts/forest-troll.jpg'
 
 // ─── DOOR CARDS — Monsters ────────────────────────────────────────────────────
 
@@ -111,6 +112,7 @@ const monsters: MonsterCard[] = [
     flavor: 'Голова відросте. Він впевнений.',
     level: 6, badStuff: 'Втрачаєш клас', treasures: 2,
     tags: ['troll'],
+    imageUrl: forestTroll,
   },
   {
     id: 'monster-016', name: 'Демон Хаосу', category: 'door', type: 'monster',
@@ -470,6 +472,32 @@ const potions: PotionCard[] = [
     effect: { type: 'combat-bonus', value: 3, description: '+3 до сили (Ельф отримує +1 рівень після бою)' },
     value: 350,
     requiredRace: ['elf'],
+  },
+  // Anti-curse immunity cards
+  {
+    id: 'potion-009', name: 'Щит від Прокляття', category: 'treasure', type: 'one-shot',
+    description: 'Зіграй коли на тебе направили прокляття — повністю блокує його ефект.',
+    flavor: '«Прокляття? Не цього разу» — написано золотими буквами.',
+    effect: { type: 'combat-bonus', value: 0, description: 'Блокує одне прокляття' },
+    value: 400,
+    antiCurse: true,
+  },
+  {
+    id: 'potion-010', name: 'Оберіг Удачі', category: 'treasure', type: 'one-shot',
+    description: 'Магічний талісман. Відводить найгірше — одного разу.',
+    flavor: 'Маленька удача краще за великі проблеми.',
+    effect: { type: 'combat-bonus', value: 0, description: 'Блокує одне прокляття' },
+    value: 350,
+    antiCurse: true,
+  },
+  {
+    id: 'potion-011', name: 'Свята Вода', category: 'treasure', type: 'one-shot',
+    description: 'Клірики освячують воду. Але пити її не рекомендується.',
+    flavor: 'Тільки зовнішнє застосування. Або від прокляттів.',
+    effect: { type: 'combat-bonus', value: 0, description: 'Блокує одне прокляття' },
+    value: 300,
+    antiCurse: true,
+    requiredClass: ['cleric'],
   },
 ]
 

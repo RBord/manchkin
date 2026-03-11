@@ -51,7 +51,7 @@ export const sampleClass: ClassCard = {
 
 export const sampleItem: ItemCard = {
   id: 'item-001',
-  name: 'Магічний Молот +5',
+  name: 'Магічний Молот',
   category: 'treasure',
   type: 'item',
   description: 'Великий молот, що світиться магічним блакитним світлом. Або це просто фарба.',

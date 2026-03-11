@@ -1,10 +1,20 @@
 import { create } from 'zustand'
 import type {
   GameState, GamePhase, Player, AnyCard, MonsterCard, ItemCard,
-  RaceCard, ClassCard, CombatCardEntry, HelpReward,
+  RaceCard, ClassCard, CombatCardEntry, HelpReward, Race, Class,
+  CurseCard, PotionCard, CardEffect,
 } from '../types'
 import { DOOR_DECK, TREASURE_DECK, shuffleDeck, drawFromDeck } from '../data/deck'
 import { canEquipItem } from '../utils/equipment'
+
+// ─── Name → enum mappings (card names are Ukrainian, store uses English enums) ──
+
+const RACE_MAP: Record<string, Race> = {
+  'ельф': 'elf', 'гном': 'dwarf', 'хафлінг': 'halfling',
+}
+const CLASS_MAP: Record<string, Class> = {
+  'воїн': 'warrior', 'маг': 'wizard', 'злодій': 'thief', 'клірик': 'cleric',
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -36,6 +46,41 @@ function playerCombatStrength(player: Player, vsMonster?: MonsterCard): number {
   return strength
 }
 
+function applyCurseToPlayer(p: Player, effect: CardEffect): Player {
+  const u = { ...p }
+  switch (effect.type) {
+    case 'lose-level':
+      u.level = Math.max(1, u.level - (effect.value ?? 1))
+      break
+    case 'lose-class':
+      if (u.classCard) { u.classCard = null; u.class = 'none' }
+      break
+    case 'lose-race':
+      if (u.raceCard) { u.raceCard = null; u.race = 'human' }
+      break
+    case 'lose-item':
+      if (u.equipped.length > 0) {
+        const best = [...u.equipped].sort((a, b) => b.bonus - a.bonus)[0]
+        u.equipped = u.equipped.filter(i => i.id !== best.id)
+      }
+      break
+    case 'lose-gold':
+      if (u.gold >= (effect.value ?? 300)) {
+        u.gold -= effect.value ?? 300
+      } else {
+        u.level = Math.max(1, u.level - 1)
+      }
+      break
+  }
+  return u
+}
+
+function hasAntiCurse(player: Player): boolean {
+  return player.hand.some(c =>
+    (c.type === 'potion' || c.type === 'one-shot') && (c as PotionCard).antiCurse
+  )
+}
+
 // ─── Store interface ──────────────────────────────────────────────────────────
 
 interface GameStore extends GameState {
@@ -60,6 +105,14 @@ interface GameStore extends GameState {
   boostMonster: (cardId: string, byPlayerId: string) => void
   offerReward: (helperId: string, cardId: string | null, victoryCount?: number) => void
   removeReward: (helperId: string) => void
+
+  // Curses
+  castCurse: (cardId: string, targetPlayerId: string) => void
+  useCurseImmunity: (cardId: string) => void
+  skipCurseImmunity: () => void
+
+  // Cancel combat cards
+  cancelCombatCard: (cardId: string) => void
 
   // Sell items
   sellItems: (cardIds: string[]) => void
@@ -116,6 +169,7 @@ const EMPTY_STATE: GameState & { log: string[] } = {
   round: 0,
   handLimitPending: false,
   tradeModal: null,
+  pendingCurse: null,
   log: [],
 }
 
@@ -170,36 +224,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({ phase: 'monster-fight', activeMonster: revealedCard as MonsterCard, revealedCard: null })
 
     } else if (revealedCard.type === 'curse') {
-      get().addLog(`Прокляття! ${revealedCard.name} — ${revealedCard.effect.description}`)
-      const updatedPlayers = [...players]
-      const p = { ...updatedPlayers[currentPlayerIndex] }
+      get().addLog(`Прокляття! ${revealedCard.name} — ${(revealedCard as CurseCard).effect.description}`)
 
-      switch (revealedCard.effect.type) {
-        case 'lose-level':
-          p.level = Math.max(1, p.level - (revealedCard.effect.value ?? 1))
-          break
-        case 'lose-class':
-          if (p.classCard) { p.classCard = null; p.class = 'none' }
-          break
-        case 'lose-race':
-          if (p.raceCard) { p.raceCard = null; p.race = 'human' }
-          break
-        case 'lose-item':
-          if (p.equipped.length > 0) {
-            const best = [...p.equipped].sort((a, b) => b.bonus - a.bonus)[0]
-            p.equipped = p.equipped.filter(i => i.id !== best.id)
-          }
-          break
-        case 'lose-gold':
-          if (p.gold >= (revealedCard.effect.value ?? 300)) {
-            p.gold -= revealedCard.effect.value ?? 300
-          } else {
-            p.level = Math.max(1, p.level - 1)
-          }
-          break
+      // Check if player has an anti-curse immunity card
+      if (hasAntiCurse(player)) {
+        get().addLog(`${player.name} має захист від прокляття — вибери: заблокувати чи прийняти!`)
+        set({
+          revealedCard: null,
+          pendingCurse: { curse: revealedCard as CurseCard, targetPlayerId: player.id, fromDoorReveal: true },
+        })
+        return
       }
 
-      updatedPlayers[currentPlayerIndex] = p
+      const updatedPlayers = [...players]
+      updatedPlayers[currentPlayerIndex] = applyCurseToPlayer(player, (revealedCard as CurseCard).effect)
       set({
         phase: 'loot-room', revealedCard: null, players: updatedPlayers,
         doorDiscard: [...doorDiscard, revealedCard],
@@ -448,6 +486,115 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set(s => ({ helpRewards: s.helpRewards.filter(r => r.helperId !== helperId) }))
   },
 
+  // ── Curses ─────────────────────────────────────────────────────────────────
+
+  castCurse: (cardId, targetPlayerId) => {
+    const { players, currentPlayerIndex, doorDiscard } = get()
+    const caster = players[currentPlayerIndex]
+    const card = caster.hand.find(c => c.id === cardId) as CurseCard | undefined
+    if (!card || card.type !== 'curse') return
+
+    const targetIdx = players.findIndex(p => p.id === targetPlayerId)
+    if (targetIdx === -1) return
+
+    // Remove curse from caster's hand
+    const updatedPlayers = players.map((p, i) =>
+      i === currentPlayerIndex ? { ...p, hand: p.hand.filter(c => c.id !== cardId) } : p
+    )
+
+    const target = updatedPlayers[targetIdx]
+
+    // Check if target has an anti-curse immunity card
+    if (hasAntiCurse(target)) {
+      get().addLog(`😈 ${caster.name} направив «${card.name}» на ${target.name}! Але у ${target.name} є захист!`)
+      set({
+        players: updatedPlayers,
+        pendingCurse: { curse: card, targetPlayerId, fromDoorReveal: false },
+      })
+      return
+    }
+
+    updatedPlayers[targetIdx] = applyCurseToPlayer(target, card.effect)
+    get().addLog(`😈 ${caster.name} направив «${card.name}» на ${target.name}! ${card.effect.description}`)
+    set({ players: updatedPlayers, doorDiscard: [...doorDiscard, card] })
+  },
+
+  useCurseImmunity: (cardId) => {
+    const { pendingCurse, players, doorDiscard, treasureDiscard } = get()
+    if (!pendingCurse) return
+
+    const { curse, targetPlayerId, fromDoorReveal } = pendingCurse
+    const targetIdx = players.findIndex(p => p.id === targetPlayerId)
+    if (targetIdx === -1) return
+
+    const target = players[targetIdx]
+    const immunityCard = target.hand.find(c => c.id === cardId)
+    if (!immunityCard) return
+
+    // Remove immunity card from target's hand and discard it
+    const updatedPlayers = players.map((p, i) =>
+      i === targetIdx ? { ...p, hand: p.hand.filter(c => c.id !== cardId) } : p
+    )
+
+    get().addLog(`🛡️ ${target.name} використав «${immunityCard.name}» і заблокував «${curse.name}»!`)
+    set({
+      players: updatedPlayers,
+      pendingCurse: null,
+      doorDiscard: [...doorDiscard, curse],
+      treasureDiscard: [...treasureDiscard, immunityCard],
+      ...(fromDoorReveal ? { phase: 'loot-room' } : {}),
+    })
+  },
+
+  skipCurseImmunity: () => {
+    const { pendingCurse, players, doorDiscard } = get()
+    if (!pendingCurse) return
+
+    const { curse, targetPlayerId, fromDoorReveal } = pendingCurse
+    const targetIdx = players.findIndex(p => p.id === targetPlayerId)
+    if (targetIdx === -1) return
+
+    const target = players[targetIdx]
+    const updatedPlayers = [...players]
+    updatedPlayers[targetIdx] = applyCurseToPlayer(target, curse.effect)
+
+    get().addLog(`${target.name} прийняв прокляття «${curse.name}»! ${curse.effect.description}`)
+    set({
+      players: updatedPlayers,
+      pendingCurse: null,
+      doorDiscard: [...doorDiscard, curse],
+      ...(fromDoorReveal ? { phase: 'loot-room' } : {}),
+    })
+  },
+
+  // ── Cancel combat cards ────────────────────────────────────────────────────
+
+  cancelCombatCard: (cardId) => {
+    const { combatCards, combatBonus, monsterBonus, players } = get()
+    const entry = combatCards.find(e => e.card.id === cardId)
+    if (!entry) return
+
+    const playerIdx = players.findIndex(p => p.id === entry.playedById)
+    if (playerIdx === -1) return
+
+    const updatedPlayers = [...players]
+    updatedPlayers[playerIdx] = {
+      ...updatedPlayers[playerIdx],
+      hand: [...updatedPlayers[playerIdx].hand, entry.card],
+    }
+
+    const updatedCards = combatCards.filter(e => e.card.id !== cardId)
+    const playerName = players[playerIdx]?.name ?? ''
+
+    get().addLog(`${playerName} скасував ефект «${entry.card.name}»`)
+    set({
+      combatCards: updatedCards,
+      combatBonus: entry.side === 'hero' ? combatBonus - entry.bonus : combatBonus,
+      monsterBonus: entry.side === 'monster' ? Math.max(0, monsterBonus - entry.bonus) : monsterBonus,
+      players: updatedPlayers,
+    })
+  },
+
   // ── Sell items ─────────────────────────────────────────────────────────────
 
   sellItems: (cardIds) => {
@@ -487,7 +634,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
   equipItem: (cardId) => {
     const { players, currentPlayerIndex } = get()
     const player = players[currentPlayerIndex]
-    const card = player.hand.find(c => c.id === cardId) as ItemCard | undefined
+    // Look in hand AND showcase
+    const card = (
+      player.hand.find(c => c.id === cardId) ??
+      player.showcase.find(c => c.id === cardId)
+    ) as ItemCard | undefined
     if (!card || card.type !== 'item') return
 
     const check = canEquipItem(player, card)
@@ -498,7 +649,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     const updatedPlayers = [...players]
     const p = { ...player }
+    // Remove from wherever the card was
     p.hand = p.hand.filter(c => c.id !== cardId)
+    p.showcase = p.showcase.filter(c => c.id !== cardId)
     p.equipped = [...p.equipped, card]
     updatedPlayers[currentPlayerIndex] = p
     get().addLog(`${player.name} надягнув: ${card.name} (+${card.bonus})`)
@@ -525,14 +678,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const card = player.hand.find(c => c.id === cardId) as RaceCard | undefined
     if (!card || card.type !== 'race') return
 
+    const newRace: Race = RACE_MAP[card.name.toLowerCase()] ?? 'human'
     const updatedPlayers = [...players]
     const p = { ...player }
     const oldRace = p.raceCard
     p.hand = p.hand.filter(c => c.id !== cardId)
     p.raceCard = card
-    p.race = card.name.toLowerCase() as any
+    p.race = newRace
     updatedPlayers[currentPlayerIndex] = p
-    get().addLog(`${player.name} тепер ${card.name}!`)
+    get().addLog(`${player.name} тепер ${card.name}! (${card.ability})`)
     set({
       players: updatedPlayers,
       doorDiscard: oldRace ? [...doorDiscard, oldRace] : doorDiscard,
@@ -558,14 +712,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const card = player.hand.find(c => c.id === cardId) as ClassCard | undefined
     if (!card || card.type !== 'class') return
 
+    const newClass: Class = CLASS_MAP[card.name.toLowerCase()] ?? 'none'
     const updatedPlayers = [...players]
     const p = { ...player }
     const oldClass = p.classCard
     p.hand = p.hand.filter(c => c.id !== cardId)
     p.classCard = card
-    p.class = card.name.toLowerCase() as any
+    p.class = newClass
     updatedPlayers[currentPlayerIndex] = p
-    get().addLog(`${player.name} тепер ${card.name}!`)
+    get().addLog(`${player.name} тепер ${card.name}! (${card.ability})`)
     set({
       players: updatedPlayers,
       doorDiscard: oldClass ? [...doorDiscard, oldClass] : doorDiscard,

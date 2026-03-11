@@ -78,6 +78,7 @@ export interface PotionCard extends BaseCard {
   value?: number
   requiredRace?: Race[]
   requiredClass?: Class[]
+  antiCurse?: boolean    // can be played to block a curse aimed at holder
 }
 
 export type AnyCard = MonsterCard | CurseCard | RaceCard | ClassCard | ItemCard | PotionCard
@@ -150,6 +151,12 @@ export interface DiceRollResult {
   badStuff: string
 }
 
+export interface PendingCurse {
+  curse: CurseCard
+  targetPlayerId: string
+  fromDoorReveal: boolean   // true = was drawn from deck; false = cast by another player
+}
+
 export interface GameState {
   phase: GamePhase
   players: Player[]
@@ -169,4 +176,5 @@ export interface GameState {
   round: number
   handLimitPending: boolean
   tradeModal: { fromPlayerId: string; toPlayerId: string } | null
+  pendingCurse: PendingCurse | null
 }

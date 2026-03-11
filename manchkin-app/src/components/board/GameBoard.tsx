@@ -11,6 +11,7 @@ import { DoorReveal } from './DoorReveal'
 import { DiceRollOverlay } from './DiceRollOverlay'
 import { HandLimitModal } from './HandLimitModal'
 import { TradeModal } from './TradeModal'
+import { CurseImmunityModal } from './CurseImmunityModal'
 
 export function GameBoard() {
   const { phase, resetGame, players } = useGameStore()
@@ -68,6 +69,7 @@ export function GameBoard() {
       <DiceRollOverlay />
       <HandLimitModal />
       <TradeModal />
+      <CurseImmunityModal />
     </div>
   )
 }

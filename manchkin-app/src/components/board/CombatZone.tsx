@@ -4,7 +4,7 @@ import { MunchkinCard } from '../cards/MunchkinCard'
 import { cn } from '../../utils/cn'
 
 export function CombatZone() {
-  const { combatCards, players } = useGameStore()
+  const { combatCards, players, cancelCombatCard } = useGameStore()
 
   const heroCards = combatCards.filter(e => e.side === 'hero')
   const monsterCards = combatCards.filter(e => e.side === 'monster')
@@ -42,6 +42,13 @@ export function CombatZone() {
                     )}>
                       +{entry.bonus} · {playerName(entry.playedById)}
                     </span>
+                    <button
+                      onClick={() => cancelCombatCard(entry.card.id)}
+                      className="text-[9px] text-red-500 hover:text-red-400 underline cursor-pointer transition"
+                      title="Скасувати ефект (картка повернеться в руку)"
+                    >
+                      ✕ скасувати
+                    </button>
                   </motion.div>
                 ))}
               </AnimatePresence>
@@ -82,6 +89,13 @@ export function CombatZone() {
                     )}>
                       +{entry.bonus} · {playerName(entry.playedById)}
                     </span>
+                    <button
+                      onClick={() => cancelCombatCard(entry.card.id)}
+                      className="text-[9px] text-red-500 hover:text-red-400 underline cursor-pointer transition"
+                      title="Скасувати посилення (картка повернеться в руку)"
+                    >
+                      ✕ скасувати
+                    </button>
                   </motion.div>
                 ))}
               </AnimatePresence>
